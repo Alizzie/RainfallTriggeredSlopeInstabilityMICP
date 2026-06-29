@@ -14,8 +14,8 @@ beta = np.radians(BETA_DEG)  # slope angle [rad]
 H_V = H_PERP / np.cos(beta)  # vertical thickness / failure depth [m]
 
 # --- Soil properties (SM soil type) ---
-C = 5  # effective cohesion [kPa]
-PHI_DEG = 33.0  # effective friction angle [°]
+C = 2  # effective cohesion [kPa]
+PHI_DEG = 36.0  # effective friction angle [°]
 GAMMA = 20.5  # unit weight of soil [kN/m³]
 N = 0.37  # porosity [-]
 

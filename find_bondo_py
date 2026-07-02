@@ -1,0 +1,88 @@
+import pandas as pd
+import matplotlib.pyplot as plt
+import numpy as np
+
+# =====================================================================
+# 1. LOAD THE DATA
+# =====================================================================
+file_path = "data/soil_moisture_history/weekly_historic_regions.csv"
+
+print("Loading BAFU Soil Moisture Data...")
+# The Swiss CSV uses semicolons ';' instead of commas
+df = pd.read_csv(
+    file_path,
+    sep=";",
+    skiprows=3,
+    parse_dates=["measured_at"],
+    dayfirst=True,
+)
+
+# Filter for the summer of 2017 (The Bondo Event)
+mask = (df["measured_at"] >= "2017-07-01") & (df["measured_at"] <= "2017-09-30")
+summer_2017 = df.loc[mask].copy()
+
+# =====================================================================
+# 2. CONVERT PERCENTAGE TO DECIMAL (0.0 to 1.0)
+# =====================================================================
+# The BAFU data is 0-100%. We divide by 100 to get our saturation proxy (m)
+summer_2017["saturation_proxy"] = summer_2017["soil_moisture_ufc"] / 100.0
+
+# =====================================================================
+# 3. PLOT ALL REGIONS TO FIND THE BONDO SPIKE
+# =====================================================================
+plt.figure(figsize=(12, 6))
+bondo_date = pd.to_datetime("2017-08-23")
+
+max_moisture = 0
+suspected_bondo_region = None
+
+for region_id in summer_2017["drought_region_id"].unique():
+    region_data = summer_2017[summer_2017["drought_region_id"] == region_id]
+    plt.plot(
+        region_data["measured_at"],
+        region_data["saturation_proxy"],
+        color="grey",
+        alpha=0.2,
+        linewidth=1,
+    )
+
+    # NEW LOGIC: Look for the maximum moisture between Aug 15 and Aug 30
+    window_data = region_data[
+        (region_data["measured_at"] >= "2017-08-15")
+        & (region_data["measured_at"] <= "2017-08-30")
+    ]
+
+    if not window_data.empty:
+        moisture_val = window_data["saturation_proxy"].max()
+        if moisture_val > max_moisture:
+            max_moisture = moisture_val
+            suspected_bondo_region = region_id
+# =====================================================================
+# 4. HIGHLIGHT THE SUSPECTED BONDO REGION
+# =====================================================================
+if suspected_bondo_region:
+    print(f"\n---> We suspect Region {suspected_bondo_region} is Bondo/Südbünden!")
+    print(
+        f"---> It had the highest saturation ({max_moisture:.2f}) on the day of the landslide."
+    )
+
+    # Plot the suspected region in bold Red
+    bondo_data = summer_2017[summer_2017["drought_region_id"] == suspected_bondo_region]
+    plt.plot(
+        bondo_data["measured_at"],
+        bondo_data["saturation_proxy"],
+        color="red",
+        linewidth=3,
+        label=f"Region {suspected_bondo_region} (Suspected Bondo)",
+    )
+
+# Draw the landslide event line
+plt.axvline(bondo_date, color="black", linestyle="--", label="Bondo Landslide (Aug 23)")
+
+plt.title("Swiss Soil Moisture (UFC) - Finding the Bondo Region")
+plt.ylabel("Saturation Proxy (m) [0.0 to 1.0]")
+plt.xlabel("Date")
+plt.legend()
+plt.grid(True, alpha=0.3)
+plt.tight_layout()
+plt.show()

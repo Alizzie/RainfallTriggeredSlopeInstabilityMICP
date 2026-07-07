@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 from matplotlib.widgets import Slider
 
 import constants as const
-import saturation as sat
+import bondo_case_study.saturation as sat
 import model
 
 # --- Initial Setup ---

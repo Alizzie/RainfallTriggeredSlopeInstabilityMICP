@@ -1,4 +1,8 @@
-# saturation.py
+"""
+Saturation calculation functions for the rainfall-slope model.
+This module provides functions to calculate soil saturation based on rainfall data and soil properties.
+"""
+
 import numpy as np
 
 

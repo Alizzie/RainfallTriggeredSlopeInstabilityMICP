@@ -1,3 +1,9 @@
+"""
+Calculate the soil moisture leading up to the Bondo landslide event in 2017.
+This script loads the BAFU soil moisture data, filters for the relevant region and time period, and plots the soil moisture leading up to the event.
+It also prints a snapshot of the soil moisture values in the days immediately before the landslide.
+"""
+
 import pandas as pd
 import matplotlib.pyplot as plt
 

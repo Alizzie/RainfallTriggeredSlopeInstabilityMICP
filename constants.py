@@ -5,7 +5,7 @@ Parameters for the model.
 import numpy as np
 
 # --- Geometry ---
-BETA_DEG = 35.0  # slope angle [°]
+BETA_DEG = 33.0  # slope angle [°]
 H_PERP = 0.60  # perpendicular thickness [m]
 
 
@@ -34,6 +34,21 @@ K_SAT = 5e-5
 # --- Initial conditions ---
 # M0 = 0.60  # initial saturation ratio [-]
 M0 = 0.3
+
+# --- Pore-pressure activation threshold ---
+# Effective-saturation level at which positive pore pressure is assumed to activate
+# Default is a prior; the value is selected by sensitivity testing against
+# Swiss saturation benchmarks (Halter et al. 2025, Landslides:
+# background dry-day saturation ~0.60, low-rainfall triggering ~0.76).
+S_PP_ONSET_DEFAULT = 0.70
+S_PP_ONSET_SWEEP = [0.65, 0.70, 0.73, 0.76]
+
+# Residual water content — used ONLY to convert model saturation (θ/n) into
+# effective saturation Se = (θ − θr)/(θs − θr) for fair comparison with the
+# benchmarks above. Small correction; state it in the writeup.
+THETA_RES = 0.04
+S_RES = THETA_RES / N  # ~0.11
+
 
 # --- Rainfall scenarios to test [mm/h] ---
 RAIN_SCENARIOS = [

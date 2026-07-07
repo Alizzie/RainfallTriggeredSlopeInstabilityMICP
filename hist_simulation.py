@@ -50,8 +50,8 @@ def get_stable_initial_saturation(bafu_df, region_id, start_date, window=10):
 def simulate(
     e_coord, n_coord, start_date: pd.Timestamp, end_date: pd.Timestamp, region_id
 ):
-    start_date = pd.to_datetime(start_date) - pd.Timedelta(days=120)
-    end_date = pd.to_datetime(end_date) + pd.Timedelta(days=60)
+    start_date = pd.to_datetime(start_date) - pd.Timedelta(days=30)
+    end_date = pd.to_datetime(end_date) + pd.Timedelta(days=30)
     year = start_date.year
 
     # --- 1A: Load rainfall data (daily precipitation in mm/day) ---
@@ -72,14 +72,14 @@ def simulate(
     print("Loading Soil Moisture Data...")
     bafu_df = pd.read_csv(
         "data/soil_moisture_history/weekly_historic_regions.csv",
-        sep=";",
+        sep=",",
         skiprows=3,
         parse_dates=["measured_at"],
         dayfirst=True,
     )
 
     # Convert percentage to 0 - 1.0
-    bafu_df["saturation_proxy"] = bafu_df["soil_moisture_ufc"] / 100.0
+    bafu_df["saturation_proxy"] = bafu_df["soil_moisture_ufc"] / 100.0  # nFK fraction
 
     bafu_local = bafu_df[
         (bafu_df["drought_region_id"] == region_id)
@@ -92,23 +92,28 @@ def simulate(
     calibration_params = pd.read_csv("output/calibration_results.csv", sep=",")
     region_params = calibration_params[calibration_params["region_id"] == region_id]
     et_rate = region_params["et"].iloc[0]
-    print(et_rate)
     drainage_rate = region_params["drainage"].iloc[0]
 
+    # initial saturation: BAFU nFK -> bucket saturation (normalised to onset)
+    init_nfk = get_stable_initial_saturation(bafu_df, region_id, start_date)
+    init_sat = init_nfk * const.S_PP_ONSET_DEFAULT
+    print(f"Initial nFK {init_nfk:.3f} -> bucket saturation {init_sat:.3f}")
+
     # --- 2 : Run Bucket Model & FoS ---
-    init_sat = get_stable_initial_saturation(bafu_df, region_id, start_date)
-    print(f"Initial Saturation (m0) from BAFU: {init_sat:.3f}")
     daily_saturation = bm.calculate_daily_saturation(
         precip_mm_day=rainfall_data,
         n=const.N,
         n_perp=const.H_PERP,
         m0=init_sat,
+        s_pp_onset=const.S_PP_ONSET_DEFAULT,
         drainage_rate=drainage_rate,
         et_rate=et_rate,
     )
 
+    m_pp = bm.pore_pressure_ratio(daily_saturation, const.S_PP_ONSET_DEFAULT)
+
     daily_fos = mod.compute_fos(
-        m_array=daily_saturation,
+        m_array=m_pp,
         c=const.C,
         gamma=const.GAMMA,
         gamma_w=const.GAMMA_W,
@@ -116,10 +121,9 @@ def simulate(
         beta_rad=const.beta,
         phi_rad=const.phi,
     )
-
     micp_cohesion = const.C + 15.0
     daily_fos_micp = mod.compute_fos(
-        m_array=daily_saturation,
+        m_array=m_pp,
         c=micp_cohesion,
         gamma=const.GAMMA,
         gamma_w=const.GAMMA_W,
@@ -132,39 +136,39 @@ def simulate(
 
     fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(12, 10), sharex=True)
 
-    # Top Plot: Hyetograph (Rainfall)
     ax1.bar(time_axis, rainfall_data, color="blue", alpha=0.6)
     ax1.set_ylabel("Rainfall (mm/day)")
     ax1.set_title("1-Year Historical Simulation (Bucket Model)")
     ax1.grid(True, alpha=0.3)
 
-    # Middle Plot: Soil Saturation Simulated vs. Observed
     ax2.plot(
         time_axis,
         daily_saturation,
         color="purple",
         linewidth=2,
-        label="Simulated Saturation",
+        label="Simulated saturation",
     )
-
     ax2.plot(
         bafu_local["measured_at"],
-        bafu_local["saturation_proxy"],
+        bafu_local["saturation_proxy"] * const.S_PP_ONSET_DEFAULT,
         color="black",
         linestyle="--",
         marker="o",
         markersize=3,
-        label=f"BAFU Measured (Region {region_id})",
+        label=f"BAFU nFK (Region {region_id})",
     )
     ax2.axhline(
-        1.0, color="black", linestyle="--", alpha=0.3, label="Max Capacity (m=1)"
+        const.S_PP_ONSET_DEFAULT,
+        color="orange",
+        linestyle=":",
+        label=f"Pore-pressure onset ({const.S_PP_ONSET_DEFAULT})",
     )
-    ax2.set_ylabel("Saturation Ratio (m)")
+    ax2.axhline(1.0, color="black", linestyle="--", alpha=0.3, label="Full saturation")
+    ax2.set_ylabel("Saturation ratio")
     ax2.set_ylim(0, 1.1)
     ax2.legend(loc="upper right")
     ax2.grid(True, alpha=0.3)
 
-    # Bottom Plot: Factor of Safety (Baseline vs MICP)
     ax3.plot(
         time_axis,
         daily_fos,
@@ -177,23 +181,14 @@ def simulate(
         daily_fos_micp,
         color="green",
         linewidth=2,
-        label=f"MICP Treated (c={micp_cohesion} kPa)",
+        label=f"MICP treated (c={micp_cohesion} kPa)",
     )
-    ax3.axhline(
-        1.0,
-        color="gray",
-        linestyle="-.",
-        linewidth=1,
-        label="Failure Threshold (FoS=1.0)",
-    )
-
-    # Fill the area where failure occurs
+    ax3.axhline(1.0, color="gray", linestyle="-.", linewidth=1, label="Failure (FoS=1)")
     ax3.fill_between(
         time_axis, 0, daily_fos, where=(daily_fos <= 1.0), color="red", alpha=0.2
     )
-
-    ax3.set_xlabel("Time (Days)")
-    ax3.set_ylabel("Factor of Safety (FoS)")
+    ax3.set_xlabel("Time (days)")
+    ax3.set_ylabel("Factor of Safety")
     ax3.set_ylim(0.5, 4.5)
     ax3.legend(loc="upper right")
     ax3.grid(True, alpha=0.3)
@@ -208,15 +203,13 @@ def simulate(
 
 def main():
     for event in data:
-        print(
-            f"\nSimulating for {event['gemeinde']} ({event['start_date'].date()} to {event['end_date'].date()})"
-        )
+        print(f"\nSimulating {event['gemeinde']} ({event['start_date'].date()})")
         simulate(
-            e_coord=event["x_coord"],
-            n_coord=event["y_coord"],
-            start_date=event["start_date"],
-            end_date=event["end_date"],
-            region_id=event["region_id"],
+            event["x_coord"],
+            event["y_coord"],
+            event["start_date"],
+            event["end_date"],
+            event["region_id"],
         )
 
 

@@ -1,5 +1,13 @@
 import numpy as np, pandas as pd, xarray as xr
-import bucket_model as bm, constants as const
+
+import sys
+import os
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+import pandas as pd
+from core import physics
+from core import constants as const
 
 region_id, e, n = 65, 2720193, 1079228  # Colrerio point coords
 year = 2014
@@ -13,7 +21,7 @@ precip = (
 )
 rain = np.nan_to_num(precip.values, nan=0.0)
 
-S = bm.calculate_daily_saturation(
+S = physics.calculate_daily_saturation(
     rain,
     n=const.N,
     n_perp=const.H_PERP,

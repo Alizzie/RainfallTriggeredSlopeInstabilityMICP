@@ -2,9 +2,15 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.widgets import Slider
 
-import constants as const
-import bondo_case_study.saturation as sat
-import model
+import sys
+import os
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+
+from core import constants as const
+import saturation as sat
+from core import physics
 
 # --- Initial Setup ---
 time_hours = const.T_HOURS
@@ -22,10 +28,10 @@ dynamic_m = sat.get_dynamic_saturation(
 )
 static_m = sat.get_static_saturation(initial_m0, time_hours)
 
-dynamic_fos = model.compute_fos(
+dynamic_fos = physics.compute_fos(
     const.C, const.GAMMA, const.GAMMA_W, const.H_V, const.beta, const.phi, dynamic_m
 )
-static_fos = model.compute_fos(
+static_fos = physics.compute_fos(
     const.C, const.GAMMA, const.GAMMA_W, const.H_V, const.beta, const.phi, static_m
 )
 
@@ -90,7 +96,7 @@ def update(val):
     new_stat_m = sat.get_static_saturation(current_m0, time_hours)
 
     # Recalculate FoS arrays with new geometry
-    new_dyn_fos = model.compute_fos(
+    new_dyn_fos = physics.compute_fos(
         current_c,
         const.GAMMA,
         const.GAMMA_W,
@@ -99,7 +105,7 @@ def update(val):
         current_phi_rad,
         new_dyn_m,
     )
-    new_stat_fos = model.compute_fos(
+    new_stat_fos = physics.compute_fos(
         current_c,
         const.GAMMA,
         const.GAMMA_W,

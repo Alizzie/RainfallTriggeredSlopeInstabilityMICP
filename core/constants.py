@@ -14,7 +14,7 @@ beta = np.radians(BETA_DEG)  # slope angle [rad]
 H_V = H_PERP / np.cos(beta)  # vertical thickness / failure depth [m]
 
 # --- Soil properties (SM soil type) ---
-C = 2  # effective cohesion [kPa]
+C = 0  # effective cohesion [kPa]
 PHI_DEG = 36.0  # effective friction angle [°]
 GAMMA = 20.5  # unit weight of soil [kN/m³]
 N = 0.37  # porosity [-]
@@ -33,7 +33,7 @@ K_SAT = 5e-5
 
 # --- Initial conditions ---
 # M0 = 0.60  # initial saturation ratio [-]
-M0 = 0.3
+M0 = 0.6
 
 # --- Pore-pressure activation threshold ---
 # Effective-saturation level at which positive pore pressure is assumed to activate
@@ -62,3 +62,8 @@ RAIN_SCENARIOS = [
 
 # --- Time axis ---
 T_HOURS = np.linspace(0, 48, 1000)  # 0 to 48 hours, 1000 points
+
+
+# --- Infinite-slope validity mask (spatial branch) ---
+BETA_MIN = 15.0
+BETA_MAX = 45.0

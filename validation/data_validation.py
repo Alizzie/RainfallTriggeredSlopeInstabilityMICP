@@ -1,117 +1,65 @@
-# batch_validate.py
+"""
+Validate the infinite-slope model against historical landslide events in Switzerland.
+"""
+
+import sys
 import os
+
 import numpy as np
 import pandas as pd
-import xarray as xr
 import matplotlib.pyplot as plt
 
-import constants as const
-import model as mod
-import bucket_model as bm
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-INVENTORY_CSV = "data/wsl_landslide.csv"  # your sheet
+
+from core import data_loader as dl
+from core import physics
+from core import constants as const
+from core import utils as ut
+from validation import val_constants as auct
+
 PLOT_DIR = "output/hist_plots"
 RESULTS_CSV = "output/validation_results.csv"
-CALIBRATION_CSV = "output/calibration_results.csv"
-WINDOW_DAYS = 2  # ±2 days around the recorded date
-SPINUP_DAYS = 120  # antecedent period for the bucket
 FOS_THRESHOLD = 1.0
 
 os.makedirs(PLOT_DIR, exist_ok=True)
 
 
-def get_calibrated_params(x, y):
-    if os.path.exists(CALIBRATION_CSV):
-        calib = pd.read_csv(CALIBRATION_CSV)
-        # find the closest region by Euclidean distance
-        calib["dist"] = np.sqrt(
-            (calib["easting"] - x) ** 2 + (calib["northing"] - y) ** 2
-        )
-        closest = calib.loc[calib["dist"].idxmin()]
-        return (
-            int(closest["region_id"]),
-            float(closest["drainage"]),
-            float(closest["et"]),
-        )
-    else:
-        print(
-            f"Warning: Calibration file '{CALIBRATION_CSV}' not found. Using default drainage and ET rates."
-        )
-        return None, 0.5, 2.0
-
-
-def to_lv95(x, y):
-    """Inventory looks like LV03 (6-digit). NetCDF grid is LV95 (7-digit)."""
-    if x < 1_000_000:  # LV03 easting ~600000-800000
-        x += 2_000_000
-    if y < 1_000_000:  # LV03 northing ~100000-300000
-        y += 1_000_000
-    return x, y
-
-
-def load_inventory(path):
-    df = pd.read_csv(path, skiprows=3)
-    # adjust these names to your actual header row
-    df = df.rename(
-        columns={
-            "x-coordinate": "x",
-            "y-coordinate": "y",
-            "date": "date",
-            "name of municipality": "municipality",
-        }
-    )
-    df["date"] = pd.to_datetime(df["date"], dayfirst=True, errors="coerce")
-    df = df.dropna(subset=["date", "x", "y"])
-    df["x"] = pd.to_numeric(df["x"], errors="coerce")
-    df["y"] = pd.to_numeric(df["y"], errors="coerce")
-    return df.dropna(subset=["x", "y"]).reset_index(drop=True)
-
-
-def load_rainfall_at(x, y, year):
-    fp = (
-        f"data/rhiresD/ogd-surface-derived-grid-archive.rhiresd_ch01h."
-        f"swiss.lv95_{year}0101000000_{year}1231000000.nc"
-    )
-    if not os.path.exists(fp):
-        return None
-    ds = xr.open_dataset(fp)
-    r = ds["RhiresD"].sel(E=x, N=y, method="nearest")
-    return pd.Series(
-        np.nan_to_num(r.values, nan=0.0), index=pd.to_datetime(r.time.values)
-    )
-
-
 def simulate_event(x, y, date):
-    x, y = to_lv95(x, y)
-    region_id, d_rate, et_rate = get_calibrated_params(x, y)
+    x, y = ut.to_lv95(x, y)
+    region_id, d_rate, et_rate = ut.get_region_params(x, y, auct.CALIB)
 
-    start = date - pd.Timedelta(days=SPINUP_DAYS)
-    end = date + pd.Timedelta(days=WINDOW_DAYS + 5)
+    start = date - pd.Timedelta(days=auct.SPINUP_DAYS)
+    end = date + pd.Timedelta(days=auct.WINDOW_DAYS + 5)
 
     # rainfall may span a year boundary; load each needed year
     years = sorted({start.year, end.year})
-    parts = [load_rainfall_at(x, y, yr) for yr in years]
-    parts = [p for p in parts if p is not None]
-    if not parts:
+
+    rain = dl.load_rainfall(x, y, years)
+
+    if rain is None or rain.empty:
         return None
-    rain = pd.concat(parts).sort_index()
+
     rain = rain.loc[start:end]
     if rain.empty:
         return None
 
-    S = bm.calculate_daily_saturation(
+    bafu = dl.load_bafu_moisture(region_id, interpolate_daily=False)
+    bafu_win = bafu.loc[start:end] if bafu is not None else pd.Series(dtype=float)
+
+    S = physics.calculate_daily_saturation(
         rain.values,
         n=const.N,
         n_perp=const.H_PERP,
-        m0=0.60,
+        m0=const.M0,
         s_pp_onset=const.S_PP_ONSET_DEFAULT,
         drainage_rate=d_rate,
         et_rate=et_rate,  # or per-region from calibration
     )
     S = pd.Series(S, index=rain.index)
-    m_pp = bm.pore_pressure_ratio(S.values, const.S_PP_ONSET_DEFAULT)
+    m_pp = physics.pore_pressure_ratio(S.values, const.S_PP_ONSET_DEFAULT)
     fos = pd.Series(
-        mod.compute_fos(
+        physics.compute_fos(
             m_array=m_pp,
             c=const.C,
             gamma=const.GAMMA,
@@ -122,39 +70,81 @@ def simulate_event(x, y, date):
         ),
         index=S.index,
     )
-    return rain, S, fos, region_id, d_rate, et_rate
+    return rain, S, fos, bafu_win, region_id, d_rate, et_rate
 
 
 def evaluate(fos, date):
     win = fos.loc[
-        date - pd.Timedelta(days=WINDOW_DAYS) : date + pd.Timedelta(days=WINDOW_DAYS)
+        date
+        - pd.Timedelta(days=auct.WINDOW_DAYS) : date
+        + pd.Timedelta(days=auct.WINDOW_DAYS)
     ]
     if win.empty:
         return None, None
     return float(win.min()), win.idxmin().date()
 
 
-def plot_event(rain, S, fos, date, name, idx):
-    fig, (a1, a2, a3) = plt.subplots(3, 1, figsize=(10, 8), sharex=True)
-    a1.bar(rain.index, rain.values, color="blue", alpha=0.6)
-    a1.set_ylabel("Rain (mm/day)")
-    a1.set_title(f"{name} — {date.date()}")
-    a2.plot(S.index, S.values, color="purple")
-    a2.axhline(const.S_PP_ONSET_DEFAULT, color="orange", ls=":")
-    a2.set_ylabel("Saturation")
-    a2.set_ylim(0, 1.1)
-    a3.plot(fos.index, fos.values, color="red")
-    a3.axhline(1.0, color="gray", ls="-.")
-    a3.axvline(date, color="black", ls="--", alpha=0.5)
-    a3.set_ylabel("FoS")
-    a3.set_ylim(0.5, 4.5)
+def plot_event(rain, S, fos, bafu, date, name, idx):
+    fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(12, 10), sharex=True)
+
+    # --- Top: Rainfall ---
+    ax1.bar(rain.index, rain.values, color="blue", alpha=0.6)
+    ax1.set_ylabel("Rainfall (mm/day)")
+    ax1.set_title(f"{name} — {date.date()}")
+    ax1.grid(True, alpha=0.3)
+
+    # --- Middle: Saturation (The Fix is Here) ---
+    ax2.plot(
+        S.index, S.values, color="purple", linewidth=2, label="Simulated Saturation"
+    )
+
+    if not bafu.empty:
+        if bafu.max() > 2.0:
+            bafu_ratio = bafu / 100.0
+        else:
+            bafu_ratio = bafu
+        scaled_bafu = bafu_ratio.values * const.S_PP_ONSET_DEFAULT
+        ax2.plot(bafu.index, scaled_bafu, "o--", color="black", ms=4, label="BAFU nFK")
+
+    ax2.axhline(
+        const.S_PP_ONSET_DEFAULT,
+        color="orange",
+        ls=":",
+        label=f"Onset ({const.S_PP_ONSET_DEFAULT})",
+    )
+    ax2.axhline(1.0, color="gray", linestyle="--", alpha=0.3, label="Full Saturation")
+    ax2.set_ylabel("Saturation")
+    ax2.set_ylim(0, 1.1)
+    ax2.legend(loc="upper right", fontsize=8)
+    ax2.grid(True, alpha=0.3)
+
+    # --- Bottom: Factor of Safety (Baseline Only) ---
+    ax3.plot(
+        fos.index,
+        fos.values,
+        color="red",
+        linewidth=2,
+        label=f"Baseline (c={const.C} kPa)",
+    )
+    ax3.axhline(1.0, color="gray", ls="-.", linewidth=1, label="Failure (FoS=1)")
+    ax3.axvline(date, color="black", ls="--", alpha=0.5, label="Event Recorded")
+    ax3.fill_between(
+        fos.index, 0, fos.values, where=(fos.values <= 1.0), color="red", alpha=0.2
+    )
+
+    ax3.set_xlabel("Time (days)")
+    ax3.set_ylabel("Factor of Safety")
+    ax3.set_ylim(0.5, 4.5)
+    ax3.legend(loc="upper right", fontsize=8)
+    ax3.grid(True, alpha=0.3)
+
     fig.tight_layout()
     fig.savefig(f"{PLOT_DIR}/event_{idx:03d}_{date.date()}.png", dpi=150)
     plt.close(fig)
 
 
 def main():
-    inv = load_inventory(INVENTORY_CSV)
+    inv = dl.load_wsl_inventory()
     print(f"{len(inv)} events with usable date + coordinates.")
 
     rows = []
@@ -163,13 +153,22 @@ def main():
         if out is None:
             rows.append({**ev, "min_fos": np.nan, "label": "no_data"})
             continue
-        rain, S, fos, region_id, d_rate, et_rate = out
+        rain, S, fos, bafu_win, region_id, d_rate, et_rate = out
         min_fos, min_date = evaluate(fos, ev["date"])
         if min_fos is None:
             rows.append({**ev, "min_fos": np.nan, "label": "no_data"})
             continue
         label = "unstable" if min_fos <= FOS_THRESHOLD else "stable"
-        plot_event(rain, S, fos, ev["date"], ev.get("municipality", "event"), idx)
+        plot_event(
+            rain, S, fos, bafu_win, ev["date"], ev.get("municipality", "event"), idx
+        )
+
+        win_rain = rain.loc[
+            ev["date"]
+            - pd.Timedelta(days=auct.WINDOW_DAYS) : ev["date"]
+            + pd.Timedelta(days=auct.WINDOW_DAYS)
+        ]
+
         rows.append(
             {
                 "municipality": ev.get("municipality", ""),
@@ -179,11 +178,7 @@ def main():
                 "min_fos": round(min_fos, 3),
                 "min_fos_date": min_date,
                 "rain_max_window": round(
-                    rain.loc[
-                        ev["date"]
-                        - pd.Timedelta(days=WINDOW_DAYS) : ev["date"]
-                        + pd.Timedelta(days=WINDOW_DAYS)
-                    ].max(),
+                    win_rain.max(),
                     1,
                 ),
                 "label": label,
@@ -209,7 +204,7 @@ def main():
     detected = (scored["label"] == "unstable").sum()
     print(
         f"\nDetection rate: {detected}/{n} = {detected/n:.1%} "
-        f"of events had FoS ≤ 1 within ±{WINDOW_DAYS} days."
+        f"of events had FoS ≤ 1 within ±{auct.WINDOW_DAYS} days."
     )
     print(f"Results -> {RESULTS_CSV} | plots -> {PLOT_DIR}/")
 

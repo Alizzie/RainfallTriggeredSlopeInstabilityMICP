@@ -1,12 +1,19 @@
+"""Aggregate soil moisture data by year and month, and save the results to CSV files."""
+
+import os
 import pandas as pd
 
+INPUT_FILE = "data/soil_moisture_history/weekly_historic_regions.csv"
+OUTDIR = "output/statistics/aggregate_moisture"
+YEARLY_OUTPUT_FILE = f"{OUTDIR}/mean_moisture_yearly.csv"
+MONTHLY_OUTPUT_FILE = f"{OUTDIR}/mean_moisture_monthly.csv"
+os.makedirs(OUTDIR, exist_ok=True)
 
-def aggregate_moisture_data(
-    input_file="data/soil_moisture_history/weekly_historic_regions.csv",
-):
+
+def aggregate_moisture_data():
     # Load data
     df = pd.read_csv(
-        input_file, sep=";", skiprows=3, parse_dates=["measured_at"], dayfirst=True
+        INPUT_FILE, sep=",", skiprows=3, parse_dates=["measured_at"], dayfirst=True
     )
     df["saturation_ratio"] = df["soil_moisture_ufc"] / 100.0
 
@@ -17,7 +24,7 @@ def aggregate_moisture_data(
         .reset_index()
     )
     yearly.columns = ["region_id", "year", "mean_moisture"]
-    yearly.to_csv("mean_moisture_yearly.csv", index=False)
+    yearly.to_csv(YEARLY_OUTPUT_FILE, index=False)
 
     # 2. Monthly Aggregation
     df["year_month"] = df["measured_at"].dt.to_period("M")
@@ -26,7 +33,7 @@ def aggregate_moisture_data(
         .mean()
         .reset_index()
     )
-    monthly.to_csv("mean_moisture_monthly.csv", index=False)
+    monthly.to_csv(MONTHLY_OUTPUT_FILE, index=False)
 
     print(
         "Aggregation complete: 'mean_moisture_yearly.csv' and 'mean_moisture_monthly.csv' created."

@@ -28,7 +28,7 @@ PATH_RAIN = (
 )
 
 PATH_BAFU = "data/soil_moisture_history/weekly_historic_regions.csv"
-PATH_CALIB = "output/calibration_results.csv"
+PATH_CALIB = "output/02_calibration/calibration_results.csv"
 PATH_INVENTORY = "data/wsl_inventory/wsl_landslide.csv"
 PATH_WSL_USABLE = "data/wsl_inventory/wsl_usable_events.csv"
 

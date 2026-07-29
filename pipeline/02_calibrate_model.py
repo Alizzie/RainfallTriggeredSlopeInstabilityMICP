@@ -24,6 +24,8 @@ from core import constants as const
 
 REGION_IDS = range(31, 69)  # Drought region IDs from 31 to 68
 YEARS = range(1991, 2026)
+OUTPUT_DIR = "output/02_calibration"
+os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 
 def objective(params, rf_values, nfk_common, nfk0, common_idx):

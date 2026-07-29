@@ -1,5 +1,10 @@
 """
-Validate the infinite-slope model against historical landslide events in Switzerland.
+01_historical_events.py - Temporal Validation against WSL Database
+
+This script simulates historical landslide events by extracting rainfall and soil
+moisture data for the weeks surrounding a documented disaster. It validates whether
+the geotechnical model correctly predicts a Factor of Safety (FoS) <= 1.0 during
+the exact real-world failure window.
 """
 
 import sys
@@ -17,6 +22,7 @@ from core import physics
 from core import constants as const
 from core import utils as ut
 from validation import val_constants as auct
+from validation import val_visuals as vis
 
 PLOT_DIR = "output/hist_plots"
 RESULTS_CSV = "output/validation_results.csv"
@@ -26,15 +32,15 @@ os.makedirs(PLOT_DIR, exist_ok=True)
 
 
 def simulate_event(x, y, date):
+    """Runs the physics model for a specific coordinate and time window."""
     x, y = ut.to_lv95(x, y)
-    region_id, d_rate, et_rate = ut.get_region_params(x, y, auct.CALIB)
+    region_id, d_rate, et_rate = dl.get_region_params(x, y, auct.CALIB)
 
     start = date - pd.Timedelta(days=auct.SPINUP_DAYS)
     end = date + pd.Timedelta(days=auct.WINDOW_DAYS + 5)
 
     # rainfall may span a year boundary; load each needed year
     years = sorted({start.year, end.year})
-
     rain = dl.load_rainfall(x, y, years)
 
     if rain is None or rain.empty:
@@ -47,6 +53,7 @@ def simulate_event(x, y, date):
     bafu = dl.load_bafu_moisture(region_id, interpolate_daily=False)
     bafu_win = bafu.loc[start:end] if bafu is not None else pd.Series(dtype=float)
 
+    # Simulate daily soil saturation
     S = physics.calculate_daily_saturation(
         rain.values,
         n=const.N,
@@ -56,8 +63,11 @@ def simulate_event(x, y, date):
         drainage_rate=d_rate,
         et_rate=et_rate,  # or per-region from calibration
     )
-    S = pd.Series(S, index=rain.index)
-    m_pp = physics.pore_pressure_ratio(S.values, const.S_PP_ONSET_DEFAULT)
+
+    S_series = pd.Series(S, index=rain.index)
+    m_pp = physics.pore_pressure_ratio(S_series.values, const.S_PP_ONSET_DEFAULT)
+
+    # Compute FoS for the entire simulation period
     fos = pd.Series(
         physics.compute_fos(
             m_array=m_pp,
@@ -68,99 +78,60 @@ def simulate_event(x, y, date):
             beta_rad=const.beta,
             phi_rad=const.phi,
         ),
-        index=S.index,
+        index=S_series.index,
     )
-    return rain, S, fos, bafu_win, region_id, d_rate, et_rate
+
+    return rain, S_series, fos, bafu_win, region_id, d_rate, et_rate
 
 
 def evaluate(fos, date):
+    """Finds the minimum FoS within the defined window around the event date"""
     win = fos.loc[
         date
         - pd.Timedelta(days=auct.WINDOW_DAYS) : date
         + pd.Timedelta(days=auct.WINDOW_DAYS)
     ]
+
     if win.empty:
         return None, None
+
     return float(win.min()), win.idxmin().date()
 
 
-def plot_event(rain, S, fos, bafu, date, name, idx):
-    fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(12, 10), sharex=True)
-
-    # --- Top: Rainfall ---
-    ax1.bar(rain.index, rain.values, color="blue", alpha=0.6)
-    ax1.set_ylabel("Rainfall (mm/day)")
-    ax1.set_title(f"{name} — {date.date()}")
-    ax1.grid(True, alpha=0.3)
-
-    # --- Middle: Saturation (The Fix is Here) ---
-    ax2.plot(
-        S.index, S.values, color="purple", linewidth=2, label="Simulated Saturation"
-    )
-
-    if not bafu.empty:
-        if bafu.max() > 2.0:
-            bafu_ratio = bafu / 100.0
-        else:
-            bafu_ratio = bafu
-        scaled_bafu = bafu_ratio.values * const.S_PP_ONSET_DEFAULT
-        ax2.plot(bafu.index, scaled_bafu, "o--", color="black", ms=4, label="BAFU nFK")
-
-    ax2.axhline(
-        const.S_PP_ONSET_DEFAULT,
-        color="orange",
-        ls=":",
-        label=f"Onset ({const.S_PP_ONSET_DEFAULT})",
-    )
-    ax2.axhline(1.0, color="gray", linestyle="--", alpha=0.3, label="Full Saturation")
-    ax2.set_ylabel("Saturation")
-    ax2.set_ylim(0, 1.1)
-    ax2.legend(loc="upper right", fontsize=8)
-    ax2.grid(True, alpha=0.3)
-
-    # --- Bottom: Factor of Safety (Baseline Only) ---
-    ax3.plot(
-        fos.index,
-        fos.values,
-        color="red",
-        linewidth=2,
-        label=f"Baseline (c={const.C} kPa)",
-    )
-    ax3.axhline(1.0, color="gray", ls="-.", linewidth=1, label="Failure (FoS=1)")
-    ax3.axvline(date, color="black", ls="--", alpha=0.5, label="Event Recorded")
-    ax3.fill_between(
-        fos.index, 0, fos.values, where=(fos.values <= 1.0), color="red", alpha=0.2
-    )
-
-    ax3.set_xlabel("Time (days)")
-    ax3.set_ylabel("Factor of Safety")
-    ax3.set_ylim(0.5, 4.5)
-    ax3.legend(loc="upper right", fontsize=8)
-    ax3.grid(True, alpha=0.3)
-
-    fig.tight_layout()
-    fig.savefig(f"{PLOT_DIR}/event_{idx:03d}_{date.date()}.png", dpi=150)
-    plt.close(fig)
-
-
 def main():
-    inv = dl.load_wsl_inventory()
-    print(f"{len(inv)} events with usable date + coordinates.")
+    """Main Execution"""
+    inv = dl.load_wsl_usable_inventory()
+    print(f"Loaded {len(inv)} historical events from the WSL inventory.")
 
-    rows = []
+    results_data = []
+
     for idx, ev in inv.iterrows():
-        out = simulate_event(ev["x"], ev["y"], ev["date"])
-        if out is None:
-            rows.append({**ev, "min_fos": np.nan, "label": "no_data"})
+        simulation_out = simulate_event(ev["x"], ev["y"], ev["date"])
+
+        if simulation_out is None:
+            results_data.append({**ev, "min_fos": np.nan, "label": "no_data"})
             continue
-        rain, S, fos, bafu_win, region_id, d_rate, et_rate = out
+
+        rain, S, fos, bafu_win, region_id, d_rate, et_rate = simulation_out
         min_fos, min_date = evaluate(fos, ev["date"])
+
         if min_fos is None:
-            rows.append({**ev, "min_fos": np.nan, "label": "no_data"})
+            results_data.append({**ev, "min_fos": np.nan, "label": "no_data"})
             continue
+
         label = "unstable" if min_fos <= FOS_THRESHOLD else "stable"
-        plot_event(
-            rain, S, fos, bafu_win, ev["date"], ev.get("municipality", "event"), idx
+
+        vis.plot_event(
+            rain,
+            S,
+            fos,
+            bafu_win,
+            ev["date"],
+            ev.get("municipality", "event"),
+            idx,
+            PLOT_DIR,
+            const.S_PP_ONSET_DEFAULT,
+            const.C,
         )
 
         win_rain = rain.loc[
@@ -169,7 +140,7 @@ def main():
             + pd.Timedelta(days=auct.WINDOW_DAYS)
         ]
 
-        rows.append(
+        results_data.append(
             {
                 "municipality": ev.get("municipality", ""),
                 "date": ev["date"].date(),
@@ -188,38 +159,49 @@ def main():
             }
         )
 
-    res = pd.DataFrame(rows)
-    res.to_csv(RESULTS_CSV, index=False)
+    res_df = pd.DataFrame(results_data)
+    res_df.to_csv(RESULTS_CSV, index=False)
 
-    scored = res[res["label"].isin(["stable", "unstable"])]
-    print("stable events, rain in window:")
-    print(scored[scored.label == "stable"]["rain_max_window"].describe())
-    print("\nunstable events, rain in window:")
-    print(scored[scored.label == "unstable"]["rain_max_window"].describe())
-    print(
-        "\nstable events with <5mm rain in window:",
-        (scored[scored.label == "stable"]["rain_max_window"] < 5).sum(),
-    )
+    # Print Summary Statistics
+    scored = res_df[res_df["label"].isin(["stable", "unstable"])]
     n = len(scored)
     detected = (scored["label"] == "unstable").sum()
-    print(
-        f"\nDetection rate: {detected}/{n} = {detected/n:.1%} "
-        f"of events had FoS ≤ 1 within ±{auct.WINDOW_DAYS} days."
-    )
-    print(f"Results -> {RESULTS_CSV} | plots -> {PLOT_DIR}/")
 
-    for lo, hi in [(0, 20), (20, 40), (40, 80), (80, 999)]:
-        band = scored[(scored.rain_max_window >= lo) & (scored.rain_max_window < hi)]
-        if len(band):
-            det = (band.label == "unstable").mean()
-            print(f"{lo:3d}-{hi:3d} mm: {det:.0%} detected  (n={len(band)})")
+    stats_file = f"{PLOT_DIR}/historical_stats.txt"
+    with open(stats_file, "w", encoding="utf-8") as txt_stats:
+        txt_stats("--- Historical Event Validation Summary ---")
+        txt_stats(f"Total scored events: {n}")
+        txt_stats(
+            f"Overall Detection Rate: {detected}/{n} ({detected/n:.1%}) of events had FoS <= 1 within ±{auct.WINDOW_DAYS} days.\n"
+        )
 
-    # summary: min-FoS distribution across events (the event-side of a future AUC)
+        txt_stats(
+            "Stable events with <5mm rain in window:",
+            (scored[scored.label == "stable"]["rain_max_window"] < 5).sum(),
+        )
+
+        txt_stats("\n--- Detection Rates by Rainfall Intensity Band ---")
+        for lo, hi in [(0, 20), (20, 40), (40, 80), (80, 999)]:
+            band = scored[
+                (scored.rain_max_window >= lo) & (scored.rain_max_window < hi)
+            ]
+            if len(band) > 0:
+                det = (band.label == "unstable").mean()
+                txt_stats(f"{lo:3d}-{hi:3d} mm: {det:4.0%} detected  (n={len(band)})")
+
+    # Print confirmation to console
+    print(f"\nModel Detection Rate: {detected}/{n} ({detected/n:.1%})")
+    print(f"Validation Results CSV saved -> {RESULTS_CSV}")
+    print(f"Detailed statistics logged to -> {stats_file}")
+    print(f"Plots saved -> {PLOT_DIR}/")
+
+    # Generate summary distribution histogram
     fig, ax = plt.subplots(figsize=(8, 5))
     ax.hist(scored["min_fos"], bins=20, color="steelblue", edgecolor="k")
-    ax.axvline(1.0, color="red", ls="--", label="Failure threshold")
-    ax.set_xlabel("Minimum FoS in event window")
-    ax.set_ylabel("Events")
+    ax.axvline(1.0, color="red", ls="--", label="Failure Threshold (FoS=1)")
+    ax.set_xlabel("Minimum FoS within Event Window")
+    ax.set_ylabel("Number of Historical Events")
+    ax.set_title("Distribution of Minimum FoS During Landslides")
     ax.legend()
     fig.tight_layout()
     fig.savefig(f"{PLOT_DIR}/_summary_minfos_hist.png", dpi=150)

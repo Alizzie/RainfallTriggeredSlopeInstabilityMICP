@@ -20,7 +20,7 @@ OUTDIR = "output/validation"
 os.makedirs(OUTDIR, exist_ok=True)
 
 
-SLOPE_TIF = "data/swissalti_slope/slope_deg_10m.tif"
+SLOPE_TIF = "data/swissalti_slope/slope_deg_25m_ch.tif"
 BETA_MIN, BETA_MAX = 15.0, 45
 
 DEM_TIF = "data/swissalti_slope/swissaltiregio_2056_5728.tif"

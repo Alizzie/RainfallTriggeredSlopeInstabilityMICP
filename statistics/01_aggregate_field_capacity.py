@@ -1,10 +1,10 @@
-"""Aggregate soil moisture data by year and month, and save the results to CSV files."""
+"""Aggregate the BAFU field capacity data by year and month, and save the results to CSV files."""
 
 import os
 import pandas as pd
 
 INPUT_FILE = "data/soil_moisture_history/weekly_historic_regions.csv"
-OUTDIR = "output/statistics/aggregate_moisture"
+OUTDIR = "output/statistics/01_aggregate_moisture"
 YEARLY_OUTPUT_FILE = f"{OUTDIR}/mean_moisture_yearly.csv"
 MONTHLY_OUTPUT_FILE = f"{OUTDIR}/mean_moisture_monthly.csv"
 os.makedirs(OUTDIR, exist_ok=True)

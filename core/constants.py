@@ -40,13 +40,13 @@ M0 = 0.6
 # Default is a prior; the value is selected by sensitivity testing against
 # Swiss saturation benchmarks (Halter et al. 2025, Landslides:
 # background dry-day saturation ~0.60, low-rainfall triggering ~0.76).
-S_PP_ONSET_DEFAULT = 0.70
-S_PP_ONSET_SWEEP = [0.65, 0.70, 0.73, 0.76]
+S_PP_ONSET_DEFAULT = 0.65
+S_PP_ONSET_SWEEP = np.linspace(0.6, 0.76, 16).tolist()
 
 # Residual water content — used ONLY to convert model saturation (θ/n) into
 # effective saturation Se = (θ − θr)/(θs − θr) for fair comparison with the
 # benchmarks above. Small correction; state it in the writeup.
-THETA_RES = 0.04
+THETA_RES = 0.045
 S_RES = THETA_RES / N  # ~0.11
 
 

@@ -1,9 +1,13 @@
 """
-Calibrate the bucket model parameters (drainage and ET rates) for each drought region using historical rainfall and soil moisture data.
-This script iterates over all drought regions and years,
-loading the corresponding rainfall and BAFU soil moisture data,
-and optimizes the drainage and ET rates to minimize the error between the simulated bucket saturation and the observed BAFU nFK values.
-The results are saved to a CSV file for further analysis and visualization.
+02_calibrate_model.py - Regional Drainage and ET Calibration
+
+This script calibrates the hydrological parameters (drainage and evapotranspiration rates)
+for all 38 Swiss drought regions. It utilizes SciPy's minimization algorithm to find
+the rates that produce simulated soil moisture levels most closely matching the historical
+BAFU field capacity (nFK) observations.
+
+Optimization Note: The objective function relies entirely on vectorized NumPy arrays
+to ensure rapid convergence across the spatial datasets.
 """
 
 import sys
@@ -20,45 +24,32 @@ from core import constants as const
 
 REGION_IDS = range(31, 69)  # Drought region IDs from 31 to 68
 YEARS = range(1991, 2026)
-LAMBDA = 1
 
 
-def objective(params, rainfall, nfk):
-    """Objective function to minimize: the error between simulated and observed nFK values."""
+def objective(params, rf_values, nfk_common, nfk0, common_idx):
+    """
+    Highly optimized objective function for SciPy.
+    Calculates the Mean Squared Error (MSE) between the simulated bucket
+    saturation and the observed BAFU nFK values.
+    """
     d_rate, et_rate = params
 
-    # 1. Run simulation (result = simulated daily saturation)
+    # 1. Run physical bucket simulation
     sim_array = physics.calculate_daily_saturation(
-        rainfall.values,
+        rf_values,
         n=const.N,
         n_perp=const.H_PERP,
-        m0=nfk.iloc[0] * const.S_PP_ONSET_DEFAULT,
+        m0=nfk0 * const.S_PP_ONSET_DEFAULT,
         s_pp_onset=const.S_PP_ONSET_DEFAULT,
         drainage_rate=d_rate,
         et_rate=et_rate,
     )
 
-    sim_array = pd.Series(sim_array, index=rainfall.index)
+    # 3. Convert absolute saturation to field capacity representation and clip
+    pred_band = np.clip(sim_array[common_idx] / const.S_PP_ONSET_DEFAULT, 0.0, 1.0)
 
-    # pred_band = how full the bucket is relative to the onset threshold, clipped to [0, 1]
-    pred_band = (sim_array / const.S_PP_ONSET_DEFAULT).clip(0, 1)
-
-    # Days where both simulation and nFK data are available
-    common = nfk.index.intersection(sim_array.index)
-
-    # b = observed nFK values for the common days
-    b = nfk.loc[common]
-
-    # m_pp = predicted pore pressure ratio for the common days
-    m_pp = pd.Series(
-        physics.pore_pressure_ratio(sim_array.values, const.S_PP_ONSET_DEFAULT),
-        index=sim_array.index,
-    )
-    # Quadratic error between predicted and observed
-    shape_err = ((pred_band.loc[common] - b) ** 2).mean()
-    sub_onset = b < 1
-    drain_err = (m_pp.loc[common][sub_onset] ** 2).mean() if sub_onset.any() else 0.0
-    return shape_err + LAMBDA * drain_err
+    # 4. Return Mean Squared Error
+    return np.mean((pred_band - nfk_common) ** 2)
 
 
 def main():
@@ -73,6 +64,8 @@ def main():
             print(f"LOG: skipping region {rid} (error loading coordinates): {e}")
             continue
 
+        print(f"Calibrating Region {rid}")
+
         for yr in YEARS:
             rf = dl.load_rainfall(avg_e, avg_n, yr)
             nfk = dl.load_bafu_moisture(rid, yr, interpolate_daily=True)
@@ -81,15 +74,25 @@ def main():
                 print(f"LOG: skipping region {rid}, year {yr} (insufficient data).")
                 continue
 
+            # 1. Check for overlapping dates between rainfall and nFK data
+            common_idx = np.where(np.isin(rf.index, nfk.index))[0]
+            if len(common_idx) == 0:
+                continue  # No overlapping dates, skip this year
+
+            common_dates = rf.index[common_idx]
+            nfk_common = nfk.reindex(common_dates).to_numpy()
+
+            # 2. Run minimization to find optimal [drainage, ET] rates
             res = minimize(
                 objective,
                 x0=[0.2, 1.5],
-                args=(rf, nfk),
+                args=(rf.to_numpy(), nfk_common, nfk.iloc[0], common_idx),
                 bounds=[(0.01, 0.5), (0.0, 5.0)],
             )
             fits.append(res.x)
 
         if fits:
+            # Average the optimized rates across all valid years for the region
             avg = np.mean(fits, axis=0)
             results.append(
                 {

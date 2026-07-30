@@ -23,7 +23,7 @@ os.makedirs(OUTDIR, exist_ok=True)
 SLOPE_TIF = "data/swissalti_slope/slope_deg_25m_ch.tif"
 BETA_MIN, BETA_MAX = 15.0, 45
 
-DEM_TIF = "data/swissalti_slope/swissaltiregio_2056_5728.tif"
+DEM_TIF = "data/swissalti_slope/dem_25m_ch.tif"
 RADII_M = [0, 30, 60, 100, 150, 200]
 
 # Soil Cohesion

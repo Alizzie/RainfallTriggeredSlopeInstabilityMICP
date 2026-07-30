@@ -45,6 +45,20 @@ def roc(pos, neg):
     return ([(neg <= t).mean() for t in thr], [(pos <= t).mean() for t in thr])
 
 
+def min_fos_at(x, y, date, beta_deg=const.BETA_DEG):
+    """ "
+    Calculates the minimum FoS within the defined time window around a given date.
+    Returns NaN if insufficient historical rainfall data exists.
+    """
+    x, y = ut.to_lv95(x, y)
+    _, drainage, et = dl.get_region_params(x, y, auct.CALIB)
+
+    if drainage is None:
+        return np.nan
+
+    return min_fos_for_params(x, y, date, drainage, et, beta_deg=beta_deg)
+
+
 def min_fos_for_params(x, y, date, drainage, et, beta_deg=const.BETA_DEG, m0=const.M0):
     """Lowest Factor of Safety in the window around a date, for a given calibration.
 
@@ -75,6 +89,7 @@ def min_fos_for_params(x, y, date, drainage, et, beta_deg=const.BETA_DEG, m0=con
     rain = dl.load_rainfall(x, y, sorted({start.year, end.year}))
     if rain is None:
         return np.nan
+
     rain = rain.loc[start:end]
     if rain.empty:
         return np.nan

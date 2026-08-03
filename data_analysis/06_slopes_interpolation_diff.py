@@ -19,7 +19,7 @@ import os
 # ---------------------------------------------------------------------------
 RASTER = sys.argv[1] if len(sys.argv) > 1 else "data/swissalti_slope/slope_diff_ch.tif"
 N_BINS = int(sys.argv[2]) if len(sys.argv) > 2 else 300
-OUTPUT_DIR = "output/statistics/02_interpolation_diff"
+OUTPUT_DIR = "output/data_analysis/02_interpolation_diff"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 OUT_PNG = f"{OUTPUT_DIR}/slope_diff_histogram.png"

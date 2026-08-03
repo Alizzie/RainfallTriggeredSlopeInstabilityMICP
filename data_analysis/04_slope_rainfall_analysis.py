@@ -15,12 +15,19 @@ Slope:
     slope_angle_distribution.csv
     slope_angle_classes.tif
     slope_angle_classes.png
+    slope_angle_classes_regions.png   (region borders + IDs, no coordinates)
+    slope_stats_by_region.csv         (min / median / mean / max per region)
 
 Rainfall:
     mean_annual_rainfall.tif
     mean_annual_rainfall.png
     rainfall_by_slope_class.csv
     rainfall_by_slope_class.png
+    rainfall_by_slope_class_monthly.csv     (monthly, per slope class)
+    rainfall_by_region_monthly.csv          (monthly, per region)
+    rainfall_by_region_monthly.gif          (animated monthly choropleth)
+    rainfall_by_region_monthly.png          (monthly lines per region)
+    rainfall_by_region_cumulative.png       (accumulation through the year)
 """
 
 import os
@@ -46,6 +53,7 @@ sys.path.append(
 )
 
 from core import data_loader
+from core import region_map
 
 # ---------------------------------------------------------------------
 # Configuration
@@ -53,7 +61,7 @@ from core import data_loader
 
 SLOPE_RASTER = Path("data/swissalti_slope/slope_deg_25m_ch.tif")
 
-OUTPUT_DIR = Path("output/statistics/slope_rainfall_analysis")
+OUTPUT_DIR = Path("output/data_analysis/04_slope_rainfall_analysis")
 
 # Adjust this range to the years available in data/rhiresD.
 RAINFALL_YEARS = range(1991, 2025)
@@ -100,6 +108,59 @@ SLOPE_COLORS = [
     "#253494",
     "#54278f",
 ]
+
+
+# ---------------------------------------------------------------------
+# Region helpers (shared by slope + rainfall)
+# ---------------------------------------------------------------------
+
+
+def slope_stats_by_region(
+    slope: np.ndarray,
+    valid_mask: np.ndarray,
+    slope_transform: rasterio.Affine,
+    region_ids: list,
+) -> pd.DataFrame:
+    """
+    Per-region slope-angle statistics (min, median, mean, max, count).
+
+    Drought polygons are rasterised onto the slope grid, then the slope values
+    inside each region are summarised.
+    """
+    region_raster = data_loader.rasterize_drought_regions(
+        rainfall_shape=slope.shape,
+        rainfall_transform=slope_transform,
+        required_region_ids=region_ids,
+    )
+
+    usable = valid_mask & np.isfinite(slope)
+    rows = []
+    for region_id in region_ids:
+        mask = usable & (region_raster == region_id)
+        values = slope[mask]
+        if values.size == 0:
+            rows.append(
+                {
+                    "region_id": region_id,
+                    "cell_count": 0,
+                    "min_slope_deg": np.nan,
+                    "median_slope_deg": np.nan,
+                    "mean_slope_deg": np.nan,
+                    "max_slope_deg": np.nan,
+                }
+            )
+            continue
+        rows.append(
+            {
+                "region_id": region_id,
+                "cell_count": int(values.size),
+                "min_slope_deg": float(np.min(values)),
+                "median_slope_deg": float(np.median(values)),
+                "mean_slope_deg": float(np.mean(values)),
+                "max_slope_deg": float(np.max(values)),
+            }
+        )
+    return pd.DataFrame(rows)
 
 
 # ---------------------------------------------------------------------
@@ -240,8 +301,17 @@ def plot_slope_classes(
     slope_classes: np.ndarray,
     transform: rasterio.Affine,
     output_file: Path,
+    geometries: dict = None,
+    label_points: dict = None,
+    axis_off: bool = False,
 ) -> None:
-    """Create a colored slope-class image."""
+    """
+    Create a colored slope-class image.
+
+    If ``geometries`` is given, region borders are drawn as thin lines with the
+    region ID inside each one. ``axis_off`` hides the LV95 coordinates so only
+    the map and the class legend remain.
+    """
 
     masked = np.ma.masked_where(
         slope_classes == 0,
@@ -287,10 +357,23 @@ def plot_slope_classes(
     colorbar.ax.set_yticklabels(SLOPE_LABELS)
     colorbar.set_label("Slope-angle class")
 
+    if geometries:
+        region_map.draw_region_borders(
+            ax,
+            geometries,
+            label_points=label_points,
+            label_ids=True,
+            border_kw={"edgecolor": "black", "linewidth": 0.4},
+        )
+
     ax.set_title("Slope-angle classes from swissALTI3D")
-    ax.set_xlabel("Easting LV95")
-    ax.set_ylabel("Northing LV95")
     ax.set_aspect("equal")
+
+    if axis_off:
+        ax.set_axis_off()
+    else:
+        ax.set_xlabel("Easting LV95")
+        ax.set_ylabel("Northing LV95")
 
     fig.tight_layout()
 
@@ -352,6 +435,31 @@ def analyse_slope():
         slope_classes=slope_classes,
         transform=transform,
         output_file=(OUTPUT_DIR / "slope_angle_classes.png"),
+        axis_off=True,
+    )
+
+    # Per-region slope statistics + a map with region borders and IDs (no axes).
+    geometries, label_points, region_ids = data_loader.load_regions()
+
+    region_stats = slope_stats_by_region(
+        slope=slope,
+        valid_mask=valid_mask,
+        slope_transform=transform,
+        region_ids=region_ids,
+    )
+    region_stats.to_csv(
+        OUTPUT_DIR / "slope_stats_by_region.csv",
+        index=False,
+        float_format="%.3f",
+    )
+
+    plot_slope_classes(
+        slope_classes=slope_classes,
+        transform=transform,
+        output_file=(OUTPUT_DIR / "slope_angle_classes_regions.png"),
+        geometries=geometries,
+        label_points=label_points,
+        axis_off=True,
     )
 
     return (
@@ -667,6 +775,153 @@ def plot_rainfall_by_slope_class(
     plt.close(fig)
 
 
+def calculate_monthly_climatology(rainfall):
+    """
+    Mean rainfall total for each calendar month (mm/month), averaged over years.
+
+    Sum daily rainfall within every month, then average each calendar month
+    across all years. Result dims: (month, N, E).
+    """
+    rainfall = rainfall.where(np.isfinite(rainfall))
+    monthly_totals = rainfall.resample(time="MS").sum(
+        dim="time",
+        skipna=True,
+        min_count=1,
+    )
+    climatology = monthly_totals.groupby("time.month").mean(
+        dim="time",
+        skipna=True,
+    )
+    climatology.name = "mean_monthly_rainfall"
+    return climatology
+
+
+def monthly_climatology_to_rasters(
+    monthly_climatology,
+) -> tuple[list, np.ndarray, rasterio.Affine]:
+    """Convert the (month, N, E) climatology into a north-up [12, H, W] stack."""
+    months = [int(m) for m in monthly_climatology["month"].values]
+    arrays = []
+    transform = None
+    for month in months:
+        array, transform = rainfall_to_raster(monthly_climatology.sel(month=month))
+        arrays.append(np.asarray(array, dtype=np.float32))
+    return months, np.stack(arrays, axis=0), transform
+
+
+def rainfall_by_region_monthly(
+    monthly_stack: np.ndarray,
+    months: list,
+    region_raster: np.ndarray,
+    region_ids: list,
+) -> pd.DataFrame:
+    """Mean monthly rainfall (mm/month) per region -> long DataFrame."""
+    rows = []
+    for index, month in enumerate(months):
+        grid = monthly_stack[index]
+        finite = np.isfinite(grid)
+        for region_id in region_ids:
+            values = grid[finite & (region_raster == region_id)]
+            rows.append(
+                {
+                    "region_id": region_id,
+                    "month": month,
+                    "mean_monthly_rainfall_mm": (
+                        float(np.mean(values)) if values.size else np.nan
+                    ),
+                    "cell_count": int(values.size),
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def rainfall_by_slope_class_monthly(
+    monthly_stack: np.ndarray,
+    months: list,
+    slope_classes: np.ndarray,
+) -> pd.DataFrame:
+    """Monthly rainfall statistics per slope class -> long DataFrame."""
+    rows = []
+    for index, month in enumerate(months):
+        grid = monthly_stack[index]
+        for class_id, label in enumerate(SLOPE_LABELS, start=1):
+            values = grid[(slope_classes == class_id) & np.isfinite(grid)]
+            if values.size == 0:
+                mean_v = median_v = std_v = min_v = max_v = np.nan
+            else:
+                mean_v = float(np.mean(values))
+                median_v = float(np.median(values))
+                std_v = float(np.std(values))
+                min_v = float(np.min(values))
+                max_v = float(np.max(values))
+            rows.append(
+                {
+                    "class_id": class_id,
+                    "slope_class": label,
+                    "month": month,
+                    "cell_count": int(values.size),
+                    "mean_monthly_rainfall_mm": mean_v,
+                    "median_monthly_rainfall_mm": median_v,
+                    "std_monthly_rainfall_mm": std_v,
+                    "min_monthly_rainfall_mm": min_v,
+                    "max_monthly_rainfall_mm": max_v,
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def plot_region_monthly_rainfall(
+    region_monthly: pd.DataFrame,
+    monthly_file: Path,
+    cumulative_file: Path,
+) -> None:
+    """
+    Two line plots, one line per region: mean monthly rainfall, and the
+    cumulative total accumulating through the year.
+    """
+    pivot = region_monthly.pivot(
+        index="month",
+        columns="region_id",
+        values="mean_monthly_rainfall_mm",
+    ).sort_index()
+
+    for data, ylabel, title, out_file, legend_loc in [
+        (
+            pivot,
+            "Mean monthly rainfall (mm/month)",
+            "Mean monthly rainfall by region",
+            monthly_file,
+            "upper right",
+        ),
+        (
+            pivot.cumsum(axis=0),
+            "Cumulative rainfall (mm)",
+            "Cumulative rainfall through the year by region",
+            cumulative_file,
+            "upper left",
+        ),
+    ]:
+        fig, ax = plt.subplots(figsize=(12, 6))
+        for region_id in data.columns:
+            ax.plot(
+                data.index,
+                data[region_id],
+                marker="o",
+                linewidth=1,
+                markersize=3,
+                label=str(region_id),
+            )
+        ax.set_xlabel("Month")
+        ax.set_ylabel(ylabel)
+        ax.set_title(title)
+        ax.set_xticks(range(1, 13))
+        ax.grid(alpha=0.3)
+        ax.legend(title="Region", ncol=2, fontsize=7, loc=legend_loc)
+        fig.tight_layout()
+        fig.savefig(out_file, dpi=200, bbox_inches="tight")
+        plt.close(fig)
+
+
 def analyse_rainfall(
     slope_classes: np.ndarray,
     slope_transform: rasterio.Affine,
@@ -690,6 +945,10 @@ def analyse_rainfall(
         mean_annual = calculate_mean_annual_rainfall(rainfall)
 
         rainfall_array, rainfall_transform = rainfall_to_raster(mean_annual)
+
+        # Monthly climatology (mm/month per calendar month) as a [12, H, W] stack.
+        monthly_climatology = calculate_monthly_climatology(rainfall)
+        months, monthly_stack, _ = monthly_climatology_to_rasters(monthly_climatology)
 
         # Trigger computation before closing NetCDF datasets.
         rainfall_array = np.asarray(
@@ -734,6 +993,61 @@ def analyse_rainfall(
     plot_rainfall_by_slope_class(
         table=table,
         output_file=(OUTPUT_DIR / "rainfall_by_slope_class.png"),
+    )
+
+    # --- Monthly rainfall differentiation -----------------------------------
+
+    # (a) Monthly rainfall per slope class (parallels the annual table above).
+    monthly_by_class = rainfall_by_slope_class_monthly(
+        monthly_stack=monthly_stack,
+        months=months,
+        slope_classes=slope_on_rainfall_grid,
+    )
+    monthly_by_class.to_csv(
+        OUTPUT_DIR / "rainfall_by_slope_class_monthly.csv",
+        index=False,
+        float_format="%.3f",
+    )
+
+    # (b) Monthly rainfall per region: CSV, animation, and accumulation plots.
+    geometries, label_points, region_ids = data_loader.load_regions()
+
+    region_raster = data_loader.rasterize_drought_regions(
+        rainfall_shape=monthly_stack.shape[1:],
+        rainfall_transform=rainfall_transform,
+        required_region_ids=region_ids,
+    )
+
+    region_monthly = rainfall_by_region_monthly(
+        monthly_stack=monthly_stack,
+        months=months,
+        region_raster=region_raster,
+        region_ids=region_ids,
+    )
+    region_monthly.to_csv(
+        OUTPUT_DIR / "rainfall_by_region_monthly.csv",
+        index=False,
+        float_format="%.3f",
+    )
+
+    region_map.animate_monthly_regions(
+        region_monthly,
+        geometries,
+        region_col="region_id",
+        month_col="month",
+        value_col="mean_monthly_rainfall_mm",
+        label_points=label_points,
+        output_file=(OUTPUT_DIR / "rainfall_by_region_monthly.gif"),
+        fps=2,
+        cmap="Blues",
+        title="Mean monthly rainfall",
+        cbar_label="Rainfall (mm/month)",
+    )
+
+    plot_region_monthly_rainfall(
+        region_monthly=region_monthly,
+        monthly_file=(OUTPUT_DIR / "rainfall_by_region_monthly.png"),
+        cumulative_file=(OUTPUT_DIR / "rainfall_by_region_cumulative.png"),
     )
 
     return table

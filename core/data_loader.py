@@ -11,6 +11,8 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
+from core import utils
+
 # --- Standardized File Paths ---
 
 # Legacy per-segment boundary CSVs (kept only for backward compatibility; the
@@ -31,6 +33,7 @@ PATH_BAFU = "data/soil_moisture_history/weekly_historic_regions.csv"
 PATH_CALIB = "output/02_calibration/calibration_results.csv"
 PATH_INVENTORY = "data/wsl_inventory/wsl_landslide.csv"
 PATH_WSL_USABLE = "data/wsl_inventory/wsl_usable_events.csv"
+STORME_PATH = "data/wsl_inventory/hangmuren_storme.csv"
 
 
 # =====================================================================
@@ -220,6 +223,25 @@ def get_region_params(x, y, calib, max_snap_m=2000.0):
     )
 
 
+def load_regions(region_ids=None):
+    """
+    Return (geometries, label_points, ids) for all drought regions.
+
+    label_points are guaranteed-inside anchors (largest part) used to write the
+    region ID; ids is the sorted list of region IDs.
+    """
+    geometries = load_region_geometries()
+
+    if region_ids is None:
+        ids = sorted(geometries)
+    else:
+        ids = [rid for rid in region_ids if rid in geometries]
+        geometries = {rid: geometries[rid] for rid in ids}
+
+    label_points = {rid: region_representative_point(rid) for rid in ids}
+    return geometries, label_points, ids
+
+
 # =====================================================================
 # Rainfall
 # =====================================================================
@@ -345,6 +367,7 @@ def load_wsl_inventory():
     df["date"] = pd.to_datetime(df["date"], format="mixed", errors="coerce")
     df["x"] = pd.to_numeric(df["x"], errors="coerce")
     df["y"] = pd.to_numeric(df["y"], errors="coerce")
+    df["x"], df["y"] = zip(*df.apply(lambda row: to_lv95(row["x"], row["y"]), axis=1))
     return df.dropna(subset=["date", "x", "y"]).reset_index(drop=True)
 
 
@@ -364,5 +387,93 @@ def load_wsl_usable_inventory():
     df["date"] = pd.to_datetime(df["date"], format="mixed", errors="coerce")
     df["x"] = pd.to_numeric(df["x"], errors="coerce")
     df["y"] = pd.to_numeric(df["y"], errors="coerce")
+    df["x"], df["y"] = zip(*df.apply(lambda row: to_lv95(row["x"], row["y"]), axis=1))
     print(f"Loaded {len(df)} usable events from the WSL inventory.")
     return df.dropna(subset=["date", "x", "y"]).reset_index(drop=True)
+
+
+def load_storme_inventory():
+    """Load the StormE landslide inventory and standardize coordinates and dates."""
+    if not os.path.exists(STORME_PATH):
+        raise FileNotFoundError(f"StormE inventory file missing: {STORME_PATH}")
+    df = pd.read_csv(STORME_PATH)
+    df = df.rename(
+        columns={
+            "X-Koordinate": "y",
+            "Y-Koordinate": "x",
+            "Datum": "date",
+            "Neigung": "slope",
+        }
+    )
+    df["date"] = pd.to_datetime(df["date"], format="mixed", errors="coerce")
+    df["x"] = pd.to_numeric(df["x"], errors="coerce")
+    df["y"] = pd.to_numeric(df["y"], errors="coerce")
+    df["slope"] = pd.to_numeric(df["slope"], errors="coerce")
+    return df.dropna(subset=["date", "x", "y"]).reset_index(drop=True)
+
+
+def flag_likely_duplicates(combined_df, date_tol_days=2, dist_tol_m=500):
+    """
+    Mark StormE events that likely duplicate a WSL event (same time, same
+    place), so the 5 regions covered by both sources don't get double-counted.
+    Adds a boolean 'likely_duplicate' column; only StormE rows can be flagged,
+    since StormE is the more precise source and is kept in a tie.
+    """
+    combined_df["likely_duplicate"] = False
+    wsl = combined_df[combined_df["source"] == "wsl"]
+
+    for i in combined_df.index[combined_df["source"] == "storme"]:
+        row = combined_df.loc[i]
+        close_in_time = wsl[
+            (wsl["date"] - row["date"]).abs() <= pd.Timedelta(days=date_tol_days)
+        ]
+        if close_in_time.empty:
+            continue
+        dist = np.hypot(close_in_time["x"] - row["x"], close_in_time["y"] - row["y"])
+        if (dist <= dist_tol_m).any():
+            combined_df.loc[i, "likely_duplicate"] = True
+
+    n_dupes = combined_df["likely_duplicate"].sum()
+    print(f"Flagged {n_dupes} StormE events as likely duplicates of a WSL event.")
+    return combined_df
+
+
+def load_combined_inventory(drop_duplicates=True):
+    """
+    Load both WSL and StormE inventories, tag each row's source, flag likely
+    duplicates in the overlapping post-2005 regions, and combine.
+
+    drop_duplicates=True excludes flagged StormE duplicates from the combined
+    frame (keeping the WSL copy); pass False to keep everything with the flag
+    intact for inspection instead.
+    """
+    wsl_df = load_wsl_usable_inventory()
+    storme_df = load_storme_inventory()
+
+    wsl_df["source"] = "wsl"
+    storme_df["source"] = "storme"
+
+    combined_df = pd.concat([wsl_df, storme_df], ignore_index=True)
+    combined_df = flag_likely_duplicates(combined_df)
+
+    if drop_duplicates:
+        combined_df = combined_df[~combined_df["likely_duplicate"]].reset_index(
+            drop=True
+        )
+
+    print(
+        f"Combined inventory contains {len(combined_df)} events "
+        f"({(combined_df['source'] == 'wsl').sum()} WSL, "
+        f"{(combined_df['source'] == 'storme').sum()} StormE)."
+    )
+    return combined_df
+
+
+def to_lv95(a, b):
+    """
+    Convert a raw (a, b) coordinate pair to LV95 (easting, northing).
+    """
+    if a > 1_000_000 and b > 1_000_000:
+        return a, b
+    easting, northing = max(a, b), min(a, b)
+    return easting + 2_000_000, northing + 1_000_000

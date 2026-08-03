@@ -34,11 +34,6 @@ BACKGROUND_TARGET = 0.60
 PLOT_DIR = "output/01_sweep_onset"
 
 
-def to_effective(S):
-    """Converts absolute saturation to effective saturation (Se) considering residual water."""
-    return np.clip((S - const.S_RES) / (1.0 - const.S_RES), 0.0, 1.0)
-
-
 def main():
     """Main function to sweep through S_PP_ONSET values and evaluate model performance."""
     os.makedirs(PLOT_DIR, exist_ok=True)
@@ -84,10 +79,9 @@ def main():
             )
 
             S_series = pd.Series(S, index=rain.index)
-            Se = to_effective(S)
 
             # 2. Calculate the median background effective saturation during dry days
-            bg = float(np.median(Se[dry_mask]))
+            bg = float(np.median(S_series[dry_mask]))
 
             # 3. Calculate dynamic pore pressure and FoS for the entire simulation period
             m_pp = pd.Series(

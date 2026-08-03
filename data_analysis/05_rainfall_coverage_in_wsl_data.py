@@ -16,7 +16,7 @@ import matplotlib.pyplot as plt
 from core import data_loader as dl
 
 SPINUP_DAYS = 120
-OUTDIR = "output/statistics/02_rainfall_coverage_in_wsl_data"
+OUTDIR = "output/data_analysis/02_rainfall_coverage_in_wsl_data"
 STAT_TXT = f"{OUTDIR}/rainfall_coverage_in_wsl_data.txt"
 WSL_INVENTORY_USABLE_CSV = "data/wsl_inventory/wsl_usable_events.csv"
 os.makedirs(OUTDIR, exist_ok=True)

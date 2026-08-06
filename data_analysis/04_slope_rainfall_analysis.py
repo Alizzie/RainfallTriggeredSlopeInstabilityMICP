@@ -877,6 +877,30 @@ def rainfall_by_slope_class_monthly(
                     "max_monthly_rainfall_mm": max_v,
                 }
             )
+
+    plt.figure(figsize=(12, 6))
+    for class_id, label in enumerate(SLOPE_LABELS, start=1):
+        class_data = pd.DataFrame(rows)[pd.DataFrame(rows)["class_id"] == class_id]
+        plt.plot(
+            class_data["month"],
+            class_data["mean_monthly_rainfall_mm"],
+            marker="o",
+            label=label,
+        )
+    plt.xlabel("Month")
+    plt.ylabel("Mean monthly rainfall (mm/month)")
+    plt.title("Mean monthly rainfall by slope class")
+    plt.xticks(range(1, 13))
+    plt.grid(alpha=0.3)
+    plt.legend(title="Slope class", loc="upper right", fontsize="small", frameon=False)
+    plt.tight_layout()
+    plt.savefig(
+        OUTPUT_DIR / "mean_monthly_rainfall_by_slope_class.png",
+        dpi=200,
+        bbox_inches="tight",
+    )
+    plt.close()
+
     return pd.DataFrame(rows)
 
 

@@ -26,12 +26,12 @@ SEED = 42
 EVENT_WINDOW_DAYS = 2
 RAIN_START_YEAR = 1991
 BACKGROUND_SATURATION = 0.60  # bucket starting state
-ONSET_GRID = np.round(np.arange(0.50, 0.76, 0.02), 3)
+ONSET_GRID = np.round(np.arange(0.50, 0.90, 0.02), 3)
 OUTDIR = Path("output/temporal/01_sweep_onset")
 OUTDIR.mkdir(parents=True, exist_ok=True)
 
-DATASET_LOADER = dl.load_wsl_inventory
-SCREENING_LOADER = dl.load_wsl_inventory
+DATASET_LOADER = dl.load_wsl_usable_inventory
+SCREENING_LOADER = dl.load_wsl_usable_inventory
 
 
 def load_train_events():
@@ -55,11 +55,11 @@ def load_rain_and_params(row, control_date):
     region = dl.assign_region(row["x"], row["y"])
     if rain is None or rain.empty or region is None:
         return None
-    drainage, et = dl.load_calibration_params(region)
-    return None if drainage is None else (rain, drainage, et)
+    drainage, et, et_amp = dl.load_calibration_params(region)
+    return None if drainage is None else (rain, drainage, et, et_amp)
 
 
-def min_fos_near(rain, drainage, et, onset, date):
+def min_fos_near(rain, drainage, et, et_amp, onset, date):
     """Lowest Factor of Safety within EVENT_WINDOW_DAYS of `date`."""
     saturation = physics.calculate_daily_saturation(
         rain.to_numpy(dtype=float),
@@ -69,6 +69,8 @@ def min_fos_near(rain, drainage, et, onset, date):
         s_pp_onset=onset,
         drainage_rate=drainage,
         et_rate=et,
+        day_of_year=rain.index.dayofyear.to_numpy(),
+        et_amplitude=et_amp,
     )
     fos = physics.compute_fos(
         m_array=physics.pore_pressure_ratio(saturation, onset),
@@ -93,7 +95,6 @@ def sweep(train):
     full_inventory = SCREENING_LOADER()
     prepared = []
     dropped_no_control = dropped_no_rain = 0
-
     for _, row in train.iterrows():
         control_date = vm.find_control_date(
             row["x"],
@@ -109,7 +110,7 @@ def sweep(train):
         if loaded is None:
             dropped_no_rain += 1
             continue
-        prepared.append((row["date"], *loaded))
+        prepared.append((row["date"], control_date, *loaded))
 
     print(
         f"{len(prepared)}/{len(train)} events have usable rainfall + calibration data "
@@ -120,11 +121,12 @@ def sweep(train):
     rows = []
     for onset in ONSET_GRID:
         event_fos = [
-            min_fos_near(rain, d, et, onset, date) for date, rain, d, et in prepared
+            min_fos_near(rain, d, et, a, onset, date)
+            for date, _, rain, d, et, a in prepared
         ]
         control_fos = [
-            min_fos_near(rain, d, et, onset, date - pd.DateOffset(years=1))
-            for date, rain, d, et in prepared
+            min_fos_near(rain, d, et, a, onset, control_date)
+            for _, control_date, rain, d, et, a in prepared
         ]
         event_fail = np.array(event_fos) <= 1.0
         control_fail = np.array(control_fos) <= 1.0

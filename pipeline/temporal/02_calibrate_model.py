@@ -45,13 +45,13 @@ def load_locked_onset():
 S_ONSET = load_locked_onset()
 
 
-def objective(params, rf_values, nfk_common, nfk0, common_idx):
+def objective(params, rf_values, nfk_common, nfk0, common_idx, day_of_year):
     """
     Highly optimized objective function for SciPy.
     Calculates the Mean Squared Error (MSE) between the simulated bucket
     saturation and the observed BAFU nFK values.
     """
-    d_rate, et_rate = params
+    d_rate, et_rate, et_amplitude = params
 
     # 1. Run physical bucket simulation
     sim_array = physics.calculate_daily_saturation(
@@ -62,6 +62,8 @@ def objective(params, rf_values, nfk_common, nfk0, common_idx):
         s_pp_onset=S_ONSET,
         drainage_rate=d_rate,
         et_rate=et_rate,
+        et_amplitude=et_amplitude,
+        day_of_year=day_of_year,
     )
 
     # 3. Convert absolute saturation to field capacity representation and clip
@@ -104,11 +106,17 @@ def main():
             # 2. Run minimization to find optimal [drainage, ET] rates
             res = minimize(
                 objective,
-                x0=[0.2, 1.5],
-                args=(rf.to_numpy(), nfk_common, nfk.iloc[0], common_idx),
-                bounds=[(0.01, 0.5), (0.0, 5.0)],
+                x0=[0.2, 1.5, 0.5],
+                args=(
+                    rf.to_numpy(),
+                    nfk_common,
+                    nfk.iloc[0],
+                    common_idx,
+                    rf.index.dayofyear.to_numpy(),
+                ),
+                bounds=[(0.01, 0.5), (0.0, 5.0), (0.0, 0.9)],
             )
-            fits.append(res.x)
+            fits.append(np.append(res.x, res.fun))
 
         if fits:
             # Average the optimized rates across all valid years for the region
@@ -120,12 +128,25 @@ def main():
                     "northing": avg_n,
                     "drainage": avg[0],
                     "et": avg[1],
+                    "et_amplitude": avg[2],
+                    "nfk_rmse": float(np.sqrt(avg[3])),
                 }
             )
 
     os.makedirs("output", exist_ok=True)
-    pd.DataFrame(results).to_csv(dl.PATH_CALIB, index=False)
+    results_df = pd.DataFrame(results)
+    results_df.to_csv(dl.PATH_CALIB, index=False)
     print(f"Calibration complete -> {dl.PATH_CALIB}.")
+
+    with open("output/temporal/02_calibration/summary.txt", "w") as f:
+        f.write("Decision-rule inputs (compare against the constant-ET run):\n")
+        f.write(f"  mean nFK RMSE     : {results_df['nfk_rmse'].mean():.4f}\n")
+        f.write(f"  mean ET           : {results_df['et'].mean():.3f} mm/day\n")
+        f.write(f"  mean ET amplitude : {results_df['et_amplitude'].mean():.3f}\n")
+        f.write(
+            f"  regions at a=0.9 bound: {(results_df['et_amplitude'] > 0.89).sum()}"
+            f"/{len(results_df)}\n"
+        )
 
 
 if __name__ == "__main__":

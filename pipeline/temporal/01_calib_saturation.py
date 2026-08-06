@@ -27,7 +27,7 @@ SEED = 42
 OUTDIR = Path("output/temporal/01_calibrate_saturation")
 OUTDIR.mkdir(parents=True, exist_ok=True)
 
-SCREENING_LOADER = dl.load_wsl_inventory
+SCREENING_LOADER = dl.load_wsl_usable_inventory
 
 
 def load_locked_onset():
@@ -55,7 +55,7 @@ def load_train_events():
 
 
 def peak_saturation(row, control_date):
-    """Highest simulated saturation near the event date and one year earlier."""
+    """Highest simulated saturation near the event date and its control date."""
     years_needed = {row["date"].year, control_date.year}
     start_year = max(min(years_needed) - 1, RAIN_START_YEAR)
     end_year = max(years_needed) + 1
@@ -63,7 +63,7 @@ def peak_saturation(row, control_date):
     region = dl.assign_region(row["x"], row["y"])
     if rain is None or rain.empty or region is None:
         return np.nan, np.nan
-    drainage, et = dl.load_calibration_params(region)
+    drainage, et, et_amp = dl.load_calibration_params(region)
     if drainage is None:
         return np.nan, np.nan
 
@@ -76,6 +76,8 @@ def peak_saturation(row, control_date):
             s_pp_onset=S_ONSET,
             drainage_rate=drainage,
             et_rate=et,
+            day_of_year=rain.index.dayofyear,
+            et_amplitude=et_amp,
         ),
         index=rain.index,
     )

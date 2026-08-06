@@ -39,8 +39,19 @@ def compute_fos(c, gamma, gamma_w, h_v, beta_rad, phi_rad, m_array) -> float:
     return fos
 
 
+ET_PEAK_DAY = 196  # ~mid-July: day of year when evapotranspiration peaks
+
+
 def calculate_daily_saturation(
-    precip_mm_day, n, n_perp, m0, s_pp_onset, drainage_rate=0.1, et_rate=2.0
+    precip_mm_day,
+    n,
+    n_perp,
+    m0,
+    s_pp_onset,
+    drainage_rate=0.1,
+    et_rate=2.0,
+    day_of_year=None,
+    et_amplitude=0.0,
 ) -> np.ndarray:
     """
     Simulates daily soil moisture using a discrete bucket model (conservation of mass).
@@ -53,9 +64,12 @@ def calculate_daily_saturation(
     s_pp_onset (float): Pore-pressure activation threshold (dimensionless).
     drainage_rate (float): Drainage rate in mm/day (default is 0.1 mm/day).
     et_rate (float): Evapotranspiration rate in mm/day (default is 2.0 mm/day).
+    day_of_year (int, optional): Day of the year (1-365) for seasonal ET variation.
+    et_amplitude (float): Amplitude of seasonal evapotranspiration variation, 0 - 1. With 0 (default) being no seasonal variation, and 1 being full variation.
+        With a > 0: E(d) = et_rate * [1 + a * cos(2*pi*(d - ET_PEAK_DAY)/365.25)]
 
     Return:
-    saturation ratio S = water / max_capacity, in [0, 1].
+        saturation ratio S = water / max_capacity, in [0, 1].
     """
 
     print("Running Bucket Model for Daily Saturation...")
@@ -63,6 +77,7 @@ def calculate_daily_saturation(
     print(f"Pore-Pressure Onset: {s_pp_onset:.3f}")
     print(f"Drainage Rate: {drainage_rate:.3f} mm/day")
     print(f"Evapotranspiration Rate: {et_rate:.3f} mm/day")
+    print(f"ET Amplitude: {et_amplitude:.3f}")
 
     # 1. Calculate the maximum capacity of the bucket in milimeters (*1000)
     max_capacity_mm = n * n_perp * 1000.0
@@ -76,12 +91,26 @@ def calculate_daily_saturation(
     moisture = np.zeros(days)
     moisture[0] = initial_water_mm
 
+    # 3b. Per-day ET
+    if et_amplitude > 0.0:
+        if day_of_year is None:
+            raise ValueError("day_of_year must be provided when et_amplitude > 0.0")
+
+        doy = np.asarray(day_of_year, dtype=float)
+
+        # Calculate daily ET with seasonal variation
+        et_daily = et_rate * (
+            1.0 + et_amplitude * np.cos(2.0 * np.pi * (doy - ET_PEAK_DAY) / 365.25)
+        )
+        et_daily = np.maximum(et_daily, 0.0)
+    else:
+        et_daily = np.full(days, et_rate, dtype=float)
+
     # 4. Run daily water balance loop
     for t in range(1, days):
-
         excess_prev = max(0.0, moisture[t - 1] - onset_mm)  # free, drainable water
         drainage = drainage_rate * excess_prev  # drainage proportional to free water
-        m = moisture[t - 1] + precip_mm_day[t] - drainage - et_rate
+        m = moisture[t - 1] + precip_mm_day[t] - drainage - et_daily[t]
         moisture[t] = max(0.0, min(m, max_capacity_mm))
 
     # 5. Moisture in mm convert to saturation ratio (m)

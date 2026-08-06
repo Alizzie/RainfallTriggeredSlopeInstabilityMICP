@@ -12,6 +12,10 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
+from shapely.geometry import shape
+from shapely.geometry import Point
+from rasterio.features import rasterize
+
 # --- Standardized File Paths ---
 
 # Legacy per-segment boundary CSVs (kept only for backward compatibility; the
@@ -94,7 +98,6 @@ def rasterize_drought_regions(
 
     Values are calibration region IDs. Prints a presence/missing diagnostic.
     """
-    from rasterio.features import rasterize
 
     geometries = load_region_geometries(required_region_ids)
     shapes = [(geometries[rid], int(rid)) for rid in sorted(required_region_ids)]
@@ -125,8 +128,6 @@ def _region_parts() -> dict:
     global _REGION_PARTS_CACHE
 
     if _REGION_PARTS_CACHE is None:
-        from shapely.geometry import shape
-
         if not os.path.exists(PATH_REGION_GEOJSON):
             raise FileNotFoundError(f"Region GeoJSON missing: {PATH_REGION_GEOJSON}")
         with open(PATH_REGION_GEOJSON) as handle:
@@ -170,7 +171,6 @@ def assign_region(x, y, max_snap_m=None):
     *bounded* snap recovers points just outside a boundary without extrapolating
     region parameters across the country.
     """
-    from shapely.geometry import Point
 
     point = Point(float(x), float(y))
     parts = _region_parts()
@@ -344,12 +344,16 @@ def load_bafu_moisture(region_id, year=None, interpolate_daily=False):
 def load_calibration_params(region_id):
     """Fetch optimized drainage and ET rates for a region."""
     if not os.path.exists(PATH_CALIB):
-        return None, None
+        return None, None, None
     calibration = pd.read_csv(PATH_CALIB)
     row = calibration[calibration["region_id"] == region_id]
     if row.empty:
-        return None, None
-    return float(row["drainage"].iloc[0]), float(row["et"].iloc[0])
+        return None, None, None
+
+    amplitude = (
+        float(row["et_amplitude"].iloc[0]) if "et_amplitude" in row.columns else 0.0
+    )
+    return float(row["drainage"].iloc[0]), float(row["et"].iloc[0]), amplitude
 
 
 def load_wsl_inventory():

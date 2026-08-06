@@ -84,7 +84,7 @@ def peak_saturation(row, full_df):
     if rain is None or rain.empty:
         return np.nan, np.nan, f"no rainfall for {start_year}-{end_year - 1}"
 
-    drainage, et = dl.load_calibration_params(region)
+    drainage, et, et_amp = dl.load_calibration_params(region)
     if drainage is None:
         return np.nan, np.nan, f"no calibration params for region {region}"
 
@@ -97,6 +97,8 @@ def peak_saturation(row, full_df):
             s_pp_onset=DRAINAGE_GATE,
             drainage_rate=drainage,
             et_rate=et,
+            day_of_year=rain.index.dayofyear.to_numpy(),
+            et_amplitude=et_amp,
         ),
         index=rain.index,
     )
@@ -171,7 +173,7 @@ def evaluate_test_set(test_df, full_df):
 
 def main():
     test_df = load_test_events()
-    full_df = dl.load_combined_inventory()
+    full_df = dl.load_wsl_usable_inventory()
     evaluate_test_set(test_df, full_df)
 
 

@@ -38,7 +38,7 @@ def region_ids_from_calibration():
     return sorted(ids)
 
 
-def _saturation_at_point(easting, northing, drainage, et):
+def _saturation_at_point(easting, northing, drainage, et, et_amp):
     """Run the bucket model on rainfall at one (E, N) point. None if no data."""
     rainfall = dl.load_rainfall(easting, northing, YEARS)
     if rainfall is None or rainfall.empty:
@@ -54,6 +54,8 @@ def _saturation_at_point(easting, northing, drainage, et):
             s_pp_onset=const.S_PP_ONSET_DEFAULT,
             drainage_rate=drainage,
             et_rate=et,
+            day_of_year=rainfall.index.dayofyear.to_numpy(),
+            et_amplitude=et_amp,
         )
 
     return pd.Series(saturation, index=rainfall.index, name="saturation_ratio")
@@ -63,14 +65,14 @@ def compute_region_saturation(region_id, geometry):
     """
     Daily saturation ratio S(t) for one region from the bucket model.
     """
-    drainage, et = dl.load_calibration_params(region_id)
+    drainage, et, et_amp = dl.load_calibration_params(region_id)
     if drainage is None or et is None:
-        drainage, et = 0.1, 2.0  # physics defaults
+        drainage, et, et_amp = 0.1, 2.0, 0.0  # physics defaults
 
     weights = rm.part_area_weights(geometry)
     series_list = []
     for (easting, northing), weight in weights:
-        part_series = _saturation_at_point(easting, northing, drainage, et)
+        part_series = _saturation_at_point(easting, northing, drainage, et, et_amp)
         if part_series is not None:
             series_list.append((part_series, weight))
 

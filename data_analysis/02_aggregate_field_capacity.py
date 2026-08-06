@@ -1,5 +1,6 @@
 """Aggregate the BAFU field capacity data by year and month, and save the results to CSV files."""
 
+from itertools import cycle
 import os
 import sys
 import pandas as pd
@@ -82,21 +83,37 @@ def aggregate_moisture_data():
 
     # Plot the mean monthly moisture by region
     plt.figure(figsize=(12, 6))
-    for region_id in mean_monthly_by_region["drought_region_id"].unique():
+    markers = ["o", "s", "^", "D"]
+
+    for i, region_id in enumerate(mean_monthly_by_region["drought_region_id"].unique()):
         region_data = mean_monthly_by_region[
             mean_monthly_by_region["drought_region_id"] == region_id
         ]
+        marker_custom = markers[(i // 10) % len(markers)]
+
         plt.plot(
             region_data["month"],
             region_data["saturation_ratio"],
-            marker="o",
-            label=f"Region {region_id}",
+            marker=marker_custom,
+            label=f"{region_id}",
         )
     plt.title("Mean Monthly Moisture by Region")
     plt.xlabel("Month")
     plt.ylabel("Mean Saturation Ratio")
     plt.xticks(range(1, 13))
-    plt.legend()
+
+    # Position legend horizontally below the plot
+    plt.legend(
+        title="Region",
+        loc="center left",
+        bbox_to_anchor=(1.02, 0.5),  # outside the axes on the right
+        ncol=2,  # horizontal layout
+        fontsize="small",
+        frameon=False,
+    )
+
+    # Leave room for the legend
+    plt.tight_layout()
     plt.grid()
     plt.savefig(f"{OUTDIR}/mean_monthly_moisture_by_region.png")
 

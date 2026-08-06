@@ -15,19 +15,20 @@ Outputs:
 """
 
 import os
+import sys
 import pandas as pd
 import matplotlib.pyplot as plt
 
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+from core import data_loader as dl
+
 STORME_CSV = "data/wsl_inventory/hangmuren_storme.csv"  # <-- your StorMe file (adjust sep/skiprows)
-CALIB = "output/calibration_results.csv"
-OUTDIR = "output/soil"
+CALIB = "output/temporal/02_calibration/calibration_results.csv"
+SLOPE_FILENAME = "slope_distribution"
+OUTDIR = "output/data_analysis/08_storme_data_analysis"
 MIN_POINTS = 5  # regions below this = too sparse to trust
 
-# --- columns: ADJUST to your exact StorMe headers ---
-# NOTE the swap: in StorMe, "X-Koordinate" is the EASTING (~2.6M) and is ALREADY LV95,
-# so do NOT apply the to_lv95(+2e6) shift you use for the big WSL inventory.
-COL_EASTING = "X-Koordinate"
-COL_NORTHING = "Y-Koordinate"
 COL_USCS = "USCS"  # the USCS col of the layer ABOVE the failure zone (section 3.3.1)
 COL_ID = "Ereignis-Nr"
 
@@ -65,14 +66,35 @@ def nearest_region(x, y, calib):
     return int(calib.loc[d.idxmin(), "region_id"])
 
 
+def slope_analysis_region(df):
+    """Get the median, mean slope angle per region, and overall slope distribution"""
+
+    slope = df["slope"].astype(str).str.replace(",", ".")
+    slope = pd.to_numeric(slope, errors="coerce").dropna()
+
+    slope_region = slope.groupby(df["region"]).agg(["median", "mean", "count"])
+    slope_region.to_csv(f"{OUTDIR}/{SLOPE_FILENAME}_per_region.csv")
+
+    txt = f"n = {len(slope)}; \nmedian = {slope.median():.1f}°; mean = {slope.mean():.1f}°; std = {slope.std():.1f}°"
+    with open(f"{OUTDIR}/{SLOPE_FILENAME}_summary.txt", "w", encoding="utf-8") as f:
+        f.write(txt)
+
+    plt.figure(figsize=(8, 5))
+    slope.hist(bins=30, color="lightblue", edgecolor="black")
+    plt.xlabel("slope angle [°]")
+    plt.ylabel("count")
+    plt.title("slope distribution (all StorMe points)")
+    plt.tight_layout()
+    plt.savefig(f"{OUTDIR}/{SLOPE_FILENAME}_histogram.png", dpi=150)
+    plt.close()
+
+
 def main():
-    df = pd.read_csv(
-        STORME_CSV, skiprows=2
-    )  # adjust sep=";" / skiprows / encoding as needed
+    df = dl.load_storme_inventory()
     calib = pd.read_csv(CALIB)
 
-    df["easting"] = pd.to_numeric(df[COL_EASTING], errors="coerce")
-    df["northing"] = pd.to_numeric(df[COL_NORTHING], errors="coerce")
+    df["easting"] = pd.to_numeric(df["x"], errors="coerce")
+    df["northing"] = pd.to_numeric(df["y"], errors="coerce")
     df["uscs"] = df[COL_USCS].map(clean_uscs)
     df = df.dropna(subset=["easting", "northing", "uscs"])
 
@@ -134,6 +156,8 @@ def main():
         plt.close()
 
     print(f"\n-> {OUTDIR}/  (crosstab, summary, points, composition.png)")
+
+    slope_analysis_region(df)
 
 
 if __name__ == "__main__":

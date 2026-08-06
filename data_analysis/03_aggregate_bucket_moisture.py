@@ -176,16 +176,19 @@ def aggregate_bucket_moisture():
     )
     mean_monthly_by_region.to_csv(BY_REGION_OUTPUT_FILE, index=False)
 
+    markers = ["o", "s", "^", "D"]
+
     # Static line plot of the monthly climatology
     plt.figure(figsize=(12, 6))
-    for region_id in mean_monthly_by_region["drought_region_id"].unique():
+    for i, region_id in enumerate(mean_monthly_by_region["drought_region_id"].unique()):
+        marker_custom = markers[(i // 10) % len(markers)]
         region_data = mean_monthly_by_region[
             mean_monthly_by_region["drought_region_id"] == region_id
         ]
         plt.plot(
             region_data["month"],
             region_data["saturation_ratio"],
-            marker="o",
+            marker=marker_custom,
             label=f"Region {region_id}",
         )
     plt.title("Modelled Mean Monthly Saturation by Region")
@@ -193,6 +196,14 @@ def aggregate_bucket_moisture():
     plt.ylabel("Mean Saturation Ratio S")
     plt.xticks(range(1, 13))
     plt.grid()
+    plt.legend(
+        title="Region",
+        loc="center left",
+        bbox_to_anchor=(1.02, 0.5),  # outside the axes on the right
+        ncol=2,  # horizontal layout
+        fontsize="small",
+        frameon=False,
+    )
     plt.savefig(f"{OUTDIR}/mean_monthly_moisture_by_region.png", bbox_inches="tight")
     plt.close()
 

@@ -14,9 +14,10 @@ import sys
 import os
 import numpy as np
 import pandas as pd
+from pathlib import Path
 from scipy.optimize import minimize
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 from core import data_loader as dl
 from core import physics
@@ -24,8 +25,24 @@ from core import constants as const
 
 REGION_IDS = range(31, 69)  # Drought region IDs from 31 to 68
 YEARS = range(1991, 2026)
-OUTPUT_DIR = "output/02_calibration"
+OUTPUT_DIR = "output/temporal/02_calibration"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+
+def load_locked_onset():
+    """Read the onset selected by 01_sweep_onset.py, instead of relying on
+    constants.py being kept in sync by hand."""
+    path = Path("output/temporal/01_sweep_onset/onset_summary.csv")
+    if not path.exists():
+        print(
+            "LOG: onset_summary.csv not found, using default S_PP_ONSET from constants.py."
+        )
+        return const.S_PP_ONSET_DEFAULT
+    summary = pd.read_csv(path)
+    return float(summary.loc[summary["youden_j"].idxmax(), "onset"])
+
+
+S_ONSET = load_locked_onset()
 
 
 def objective(params, rf_values, nfk_common, nfk0, common_idx):
@@ -41,14 +58,14 @@ def objective(params, rf_values, nfk_common, nfk0, common_idx):
         rf_values,
         n=const.N,
         n_perp=const.H_PERP,
-        m0=nfk0 * const.S_PP_ONSET_DEFAULT,
-        s_pp_onset=const.S_PP_ONSET_DEFAULT,
+        m0=nfk0 * S_ONSET,
+        s_pp_onset=S_ONSET,
         drainage_rate=d_rate,
         et_rate=et_rate,
     )
 
     # 3. Convert absolute saturation to field capacity representation and clip
-    pred_band = np.clip(sim_array[common_idx] / const.S_PP_ONSET_DEFAULT, 0.0, 1.0)
+    pred_band = np.clip(sim_array[common_idx] / S_ONSET, 0.0, 1.0)
 
     # 4. Return Mean Squared Error
     return np.mean((pred_band - nfk_common) ** 2)

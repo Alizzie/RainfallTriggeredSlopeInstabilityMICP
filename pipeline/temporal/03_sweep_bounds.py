@@ -10,10 +10,11 @@ import os
 import contextlib
 import io
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
 from scipy.optimize import minimize
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 from core import data_loader as dl
 from core import physics
@@ -21,7 +22,7 @@ from core import constants as const
 from core import utils as ut
 from validation import val_utils as autils
 
-OUTPUT_DIR = "output/03_bounds_analysis"
+OUTPUT_DIR = "output/temporal/03_bounds_analysis"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # --- Configuration ---
@@ -42,6 +43,18 @@ BOUNDS_TO_TEST = [
     (0.45, 5.0),
     (0.50, 5.0),  # The current baseline
 ]
+
+
+def load_train_events():
+    """Reuse the split from 01_sweep_onset.py so both scripts compare the
+    exact same events."""
+    path = "output/01_sweep_onset/train_events.csv"
+    if not os.path.exists(path):
+        raise FileNotFoundError(
+            "Run 01_sweep_onset.py first to create the train/test split."
+        )
+    return pd.read_csv(path, parse_dates=["date"])
+
 
 # =====================================================================
 # 1. Optimized Core Functions
@@ -117,7 +130,7 @@ def min_fos_dynamic(x, y, date, calib_dict):
 
 
 def evaluate_auc_for_bounds(calib_dict):
-    inv = dl.load_wsl_usable_inventory()
+    inv = load_train_events()
     if QUICK_TEST_MODE:
         inv = inv.sample(min(20, len(inv)), random_state=42).reset_index(drop=True)
 

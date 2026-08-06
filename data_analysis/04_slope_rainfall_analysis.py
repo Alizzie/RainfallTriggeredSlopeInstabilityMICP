@@ -1,33 +1,5 @@
 """
 Analyse slope-angle proportions and historical mean annual rainfall.
-
-Inputs
-------
-Slope raster:
-    data/swissalti_slope/slope_deg_25m_ch.tif
-
-Rainfall:
-    Loaded through core.data_loader.load_rainfall_grid()
-
-Outputs
--------
-Slope:
-    slope_angle_distribution.csv
-    slope_angle_classes.tif
-    slope_angle_classes.png
-    slope_angle_classes_regions.png   (region borders + IDs, no coordinates)
-    slope_stats_by_region.csv         (min / median / mean / max per region)
-
-Rainfall:
-    mean_annual_rainfall.tif
-    mean_annual_rainfall.png
-    rainfall_by_slope_class.csv
-    rainfall_by_slope_class.png
-    rainfall_by_slope_class_monthly.csv     (monthly, per slope class)
-    rainfall_by_region_monthly.csv          (monthly, per region)
-    rainfall_by_region_monthly.gif          (animated monthly choropleth)
-    rainfall_by_region_monthly.png          (monthly lines per region)
-    rainfall_by_region_cumulative.png       (accumulation through the year)
 """
 
 import os
@@ -166,6 +138,39 @@ def slope_stats_by_region(
 # ---------------------------------------------------------------------
 # Slope analysis
 # ---------------------------------------------------------------------
+
+
+def plot_slope_histogram(
+    valid_slopes: np.ndarray,
+    output_file: Path,
+) -> None:
+    """Plot a histogram of each slope angles."""
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+    bins = np.linspace(0, 90, 91)
+
+    ax.hist(
+        valid_slopes,
+        bins=bins,
+        color="lightblue",
+        edgecolor="black",
+    )
+
+    ax.set_xlabel("Slope angle [°]")
+    ax.set_ylabel("Frequency (pixel count)")
+    ax.set_title("Slope-angle distribution")
+
+    ax.set_xlim(0, 90)
+    ax.grid(axis="y", alpha=0.3)
+
+    fig.tight_layout()
+    fig.savefig(
+        output_file,
+        dpi=300,
+        bbox_inches="tight",
+    )
+
+    plt.close(fig)
 
 
 def classify_slope(
@@ -460,6 +465,11 @@ def analyse_slope():
         geometries=geometries,
         label_points=label_points,
         axis_off=True,
+    )
+
+    plot_slope_histogram(
+        valid_slopes=slope[valid_mask & np.isfinite(slope)],
+        output_file=(OUTPUT_DIR / "slope_angle_histogram.png"),
     )
 
     return (
@@ -885,6 +895,8 @@ def plot_region_monthly_rainfall(
         values="mean_monthly_rainfall_mm",
     ).sort_index()
 
+    markers = ["o", "s", "^", "D"]
+
     for data, ylabel, title, out_file, legend_loc in [
         (
             pivot,
@@ -902,11 +914,12 @@ def plot_region_monthly_rainfall(
         ),
     ]:
         fig, ax = plt.subplots(figsize=(12, 6))
-        for region_id in data.columns:
+        for i, region_id in enumerate(data.columns):
+            marker_custom = markers[(i // 10) % len(markers)]
             ax.plot(
                 data.index,
                 data[region_id],
-                marker="o",
+                marker=marker_custom,
                 linewidth=1,
                 markersize=3,
                 label=str(region_id),
@@ -916,7 +929,14 @@ def plot_region_monthly_rainfall(
         ax.set_title(title)
         ax.set_xticks(range(1, 13))
         ax.grid(alpha=0.3)
-        ax.legend(title="Region", ncol=2, fontsize=7, loc=legend_loc)
+        ax.legend(
+            title="Region",
+            loc="center left",
+            bbox_to_anchor=(1.02, 0.5),  # outside the axes on the right
+            ncol=2,  # horizontal layout
+            fontsize="small",
+            frameon=False,
+        )
         fig.tight_layout()
         fig.savefig(out_file, dpi=200, bbox_inches="tight")
         plt.close(fig)

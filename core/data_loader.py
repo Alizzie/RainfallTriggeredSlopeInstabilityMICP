@@ -4,14 +4,13 @@ Handles all NetCDF, CSV, raster, inventory and region-geometry loading to keep
 execution scripts clean.
 """
 
+import csv
 import json
 import os
 
 import numpy as np
 import pandas as pd
 import xarray as xr
-
-from core import utils
 
 # --- Standardized File Paths ---
 
@@ -30,7 +29,7 @@ PATH_RAIN = (
 )
 
 PATH_BAFU = "data/soil_moisture_history/weekly_historic_regions.csv"
-PATH_CALIB = "output/02_calibration/calibration_results.csv"
+PATH_CALIB = "output/temporal/02_calibration/calibration_results.csv"
 PATH_INVENTORY = "data/wsl_inventory/wsl_landslide.csv"
 PATH_WSL_USABLE = "data/wsl_inventory/wsl_usable_events.csv"
 STORME_PATH = "data/wsl_inventory/hangmuren_storme.csv"
@@ -384,7 +383,9 @@ def load_wsl_usable_inventory():
             "name of municipality": "municipality",
         }
     )
-    df["date"] = pd.to_datetime(df["date"], format="mixed", errors="coerce")
+    df["date"] = pd.to_datetime(
+        df["date"], format="mixed", errors="coerce", dayfirst=True
+    )
     df["x"] = pd.to_numeric(df["x"], errors="coerce")
     df["y"] = pd.to_numeric(df["y"], errors="coerce")
     df["x"], df["y"] = zip(*df.apply(lambda row: to_lv95(row["x"], row["y"]), axis=1))
@@ -396,19 +397,32 @@ def load_storme_inventory():
     """Load the StormE landslide inventory and standardize coordinates and dates."""
     if not os.path.exists(STORME_PATH):
         raise FileNotFoundError(f"StormE inventory file missing: {STORME_PATH}")
-    df = pd.read_csv(STORME_PATH)
+    df = pd.read_csv(
+        STORME_PATH,
+        sep=",",
+        skiprows=2,
+        engine="python",
+        quotechar='"',
+        quoting=csv.QUOTE_MINIMAL,
+        encoding="utf-8-sig",
+        on_bad_lines="warn",
+    )
+
     df = df.rename(
         columns={
-            "X-Koordinate": "y",
-            "Y-Koordinate": "x",
+            "X-Koordinate": "x",
+            "Y-Koordinate": "y",
             "Datum": "date",
             "Neigung": "slope",
         }
     )
-    df["date"] = pd.to_datetime(df["date"], format="mixed", errors="coerce")
+    df["date"] = pd.to_datetime(
+        df["date"], format="mixed", errors="coerce", dayfirst=True
+    )
     df["x"] = pd.to_numeric(df["x"], errors="coerce")
     df["y"] = pd.to_numeric(df["y"], errors="coerce")
     df["slope"] = pd.to_numeric(df["slope"], errors="coerce")
+    print(f"Loaded {len(df)} events from the StormE inventory.")
     return df.dropna(subset=["date", "x", "y"]).reset_index(drop=True)
 
 
@@ -473,7 +487,26 @@ def to_lv95(a, b):
     """
     Convert a raw (a, b) coordinate pair to LV95 (easting, northing).
     """
-    if a > 1_000_000 and b > 1_000_000:
+    if pd.isna(a) or pd.isna(b):
+        return np.nan, np.nan
+
+    a, b = float(a), float(b)
+
+    # LV95 already in correct E, N order
+    if 2_400_000 <= a <= 2_900_000 and 1_000_000 <= b <= 1_400_000:
         return a, b
-    easting, northing = max(a, b), min(a, b)
-    return easting + 2_000_000, northing + 1_000_000
+
+    # LV95 supplied as N, E
+    if 1_000_000 <= a <= 1_400_000 and 2_400_000 <= b <= 2_900_000:
+        return b, a
+
+    # LV03 already in correct E, N order
+    if 400_000 <= a <= 900_000 and 0 <= b <= 400_000:
+        return a + 2_000_000, b + 1_000_000
+
+    # LV03 supplied as N, E
+    if 0 <= a <= 400_000 and 400_000 <= b <= 900_000:
+        return b + 2_000_000, a + 1_000_000
+
+    # Unknown or invalid coordinate convention
+    return np.nan, np.nan

@@ -5,7 +5,7 @@ Parameters for the model.
 import numpy as np
 
 # --- Geometry ---
-BETA_DEG = 33.0  # fixed slope angle [°] for temporal validation
+BETA_DEG = 30  # fixed slope angle [°] for temporal validation
 BETA_MIN = 15.0
 BETA_MAX = 35.0
 H_PERP = 0.6  # perpendicular thickness [m]
@@ -17,7 +17,7 @@ H_V = H_PERP / np.cos(beta)  # vertical thickness / failure depth [m]
 
 # --- Soil properties (SM soil type) ---
 C = 0  # effective cohesion [kPa]
-PHI_DEG = 36.0  # effective friction angle [°]
+PHI_DEG = 35.0  # effective friction angle [°]
 GAMMA = 19.5  # unit weight of soil [kN/m³]
 N = 0.4  # porosity [-]
 
@@ -38,8 +38,8 @@ GAMMA_W = 9.81  # unit weight of water [kN/m³]
 # Default is a prior; the value is selected by sensitivity testing against
 # Swiss saturation benchmarks (Halter et al. 2025, Landslides:
 # background dry-day saturation ~0.60, low-rainfall triggering ~0.76).
-S_PP_ONSET_DEFAULT = 0.592
-S_PP_ONSET_SWEEP = np.linspace(0.5, 0.76, 16).tolist()
+S_PP_ONSET_DEFAULT = 0.58
+S_PP_ONSET_SWEEP = np.linspace(0.5, 0.76, 14).tolist()
 
 
 # --- Rainfall scenarios to test [mm/h] ---

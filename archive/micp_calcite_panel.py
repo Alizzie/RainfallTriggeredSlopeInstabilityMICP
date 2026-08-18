@@ -7,7 +7,7 @@ Panel B: the same x-axis translated into a REQUIRED CALCITE CONTENT band.
 
 Chain, both steps explicit:
   1) cohesion -> UCS   (Mohr-Coulomb, exact)
-        UCS = dc * 2*cos(phi) / (1 - sin(phi))      ~= 3.92 * dc at phi = 36 deg
+        UCS = dc * 2*cos(phi) / (1 - sin(phi))      ~= 3.92 * dc at phi = 35 deg
   2) UCS -> calcite    (literature power law, UNCERTAIN)
         UCS = k * Cc^n   ->   Cc = (UCS / k)^(1/n)
      k is derived from a literature anchor point; n ~ 2 assumed (lit. range 1.5-3.0).
@@ -44,7 +44,7 @@ SCENARIOS = {
     ),
 }
 
-PHI_DEG = 36.0  # must match core/constants.py
+PHI_DEG = 35.0  # must match core/constants.py
 N_EXP = 2.0  # power-law exponent, literature range 1.5 - 3.0
 
 # literature anchors: (calcite_percent, UCS_kPa, label)

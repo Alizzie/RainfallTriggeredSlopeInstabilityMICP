@@ -5,8 +5,10 @@ execution scripts clean.
 """
 
 import csv
+import functools
 import json
 import os
+import rasterio
 
 import numpy as np
 import pandas as pd
@@ -37,6 +39,8 @@ PATH_CALIB = "output/temporal/02_calibration/calibration_results.csv"
 PATH_INVENTORY = "data/wsl_inventory/wsl_landslide.csv"
 PATH_WSL_USABLE = "data/wsl_inventory/wsl_usable_events.csv"
 STORME_PATH = "data/wsl_inventory/hangmuren_storme.csv"
+
+FOREST_TIF = "data/swissTLM3D/tlm_forest_25m_ch.tif"
 
 
 # =====================================================================
@@ -204,21 +208,22 @@ def get_region_coordinates(region_id):
 
 def get_region_params(x, y, calib, max_snap_m=2000.0):
     """
-    (region_id, drainage, et) for the region CONTAINING (x, y).
+    (region_id, drainage, et, et_amplitude) for the region CONTAINING (x, y).
 
     Point-in-polygon, not nearest-centroid: exact and multipart-safe. Returns
-    (None, None, None) if the point lies in no region (and outside max_snap_m).
+    (None, None, None, None) if the point lies in no region (and outside max_snap_m).
     """
     region_id = assign_region(x, y, max_snap_m=max_snap_m)
     if region_id is None:
-        return None, None, None
+        return None, None, None, None
     row = calib[calib["region_id"] == region_id]
     if row.empty:
-        return region_id, None, None
+        return region_id, None, None, None
     return (
         region_id,
         float(row["drainage"].iloc[0]),
         float(row["et"].iloc[0]),
+        float(row["et_amplitude"].iloc[0]) if "et_amplitude" in row.columns else 0.0,
     )
 
 
@@ -514,3 +519,24 @@ def to_lv95(a, b):
 
     # Unknown or invalid coordinate convention
     return np.nan, np.nan
+
+
+@functools.lru_cache(maxsize=1)
+def load_forest_raster():
+    """Forest-type classification raster, read once and cached.
+
+    Returns (class_array, transform, nodata):
+        class_array : 2-D array of raster class codes. 0 (or `nodata`) means
+                       non-forest / no data. Other codes are whatever the
+                       source raster encodes -- e.g. root_cohesion.py maps
+                       {6, 12, 13, 14} to per-stand-type cohesion values,
+                       matching sensitivity_analysis.py's ROOT_C mapping.
+        transform   : the raster's affine transform (rasterio convention).
+        nodata      : the raster's nodata sentinel, or None.
+
+    """
+    with rasterio.open(FOREST_TIF) as src:
+        class_array = src.read(1)
+        transform = src.transform
+        nodata = src.nodata
+    return class_array, transform, nodata

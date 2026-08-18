@@ -38,8 +38,10 @@ GAMMA_W = 9.81  # unit weight of water [kN/m³]
 # Default is a prior; the value is selected by sensitivity testing against
 # Swiss saturation benchmarks (Halter et al. 2025, Landslides:
 # background dry-day saturation ~0.60, low-rainfall triggering ~0.76).
-S_PP_ONSET_DEFAULT = 0.58
+S_PP_ONSET_DEFAULT = 0.72
+M0 = S_PP_ONSET_DEFAULT  # initial saturation ratio [-]
 S_PP_ONSET_SWEEP = np.linspace(0.5, 0.76, 14).tolist()
+S_CRIT = 0.82
 
 
 # --- Rainfall scenarios to test [mm/h] ---
@@ -58,8 +60,3 @@ T_HOURS = np.linspace(0, 48, 1000)  # 0 to 48 hours, 1000 points
 # --- Hydraulic properties ---
 # K_SAT = 1e-6  # saturated hydraulic conductivity [m/s]
 K_SAT = 5e-5
-
-
-# --- Initial conditions ---
-# M0 = 0.60  # initial saturation ratio [-]
-M0 = 0.6

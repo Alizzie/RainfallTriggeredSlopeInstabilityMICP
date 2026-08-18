@@ -5,12 +5,24 @@ import pandas as pd
 
 
 def find_control_date(
-    x, y, event_date, inventory_df, *, max_years=5, window_days=5, rain_start_year=1991
+    x,
+    y,
+    event_date,
+    inventory_df,
+    *,
+    n=1,
+    max_years=None,
+    window_days=5,
+    rain_start_year=1991
 ):
     """A same-location control date ~1 year from the event with no recorded
     landslide nearby in `inventory_df`, so the control day isn't secretly a
     real event (label leakage).
     """
+
+    if max_years is None:
+        max_years = 5 * n
+
     control_date = event_date - pd.DateOffset(years=1)
     step = -1
     if control_date.year < rain_start_year:
@@ -18,6 +30,7 @@ def find_control_date(
         step = 1
 
     same_location = (inventory_df["x"] == x) & (inventory_df["y"] == y)
+    found = []
     for _ in range(max_years):
         nearby = inventory_df[
             same_location
@@ -25,9 +38,14 @@ def find_control_date(
             & (inventory_df["date"] <= control_date + pd.Timedelta(days=window_days))
         ]
         if nearby.empty:
-            return control_date
+            found.append(control_date)
+            if len(found) >= n:
+                break
         control_date += pd.DateOffset(years=step)
-    return None
+
+    if n == 1:
+        return found[0] if found else None
+    return found
 
 
 def confusion_counts(event_flags, control_flags):

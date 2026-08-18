@@ -1,4 +1,3 @@
-import calendar
 import sys
 import os
 import numpy as np
@@ -7,27 +6,11 @@ import matplotlib.pyplot as plt
 import io
 import contextlib
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-from validation import val_constants as auct
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
+from pipeline.utils import constants as auct
 from core import physics
 from core import constants as const
-from core import utils as ut
 from core import data_loader as dl
-
-
-def control_dates(event_date, k):
-    """k dates: same month, random day, random OTHER year."""
-    out = []
-    years = [y for y in auct.CONTROL_YEARS if y != event_date.year]
-    auct.RNG.shuffle(years)
-
-    for yr in years:
-        if len(out) >= k:
-            break
-        last = calendar.monthrange(yr, event_date.month)[1]
-        day = int(auct.RNG.integers(1, last + 1))
-        out.append(pd.Timestamp(year=yr, month=event_date.month, day=day))
-    return out
 
 
 def auc_score(pos, neg):
@@ -50,16 +33,18 @@ def min_fos_at(x, y, date, beta_deg=const.BETA_DEG):
     Calculates the minimum FoS within the defined time window around a given date.
     Returns NaN if insufficient historical rainfall data exists.
     """
-    x, y = ut.to_lv95(x, y)
-    _, drainage, et = dl.get_region_params(x, y, auct.CALIB)
+    x, y = dl.to_lv95(x, y)
+    _, drainage, et, et_amp = dl.get_region_params(x, y, auct.CALIB)
 
     if drainage is None:
         return np.nan
 
-    return min_fos_for_params(x, y, date, drainage, et, beta_deg=beta_deg)
+    return min_fos_for_params(x, y, date, drainage, et, et_amp, beta_deg=beta_deg)
 
 
-def min_fos_for_params(x, y, date, drainage, et, beta_deg=const.BETA_DEG, m0=const.M0):
+def min_fos_for_params(
+    x, y, date, drainage, et, et_amp, beta_deg=const.BETA_DEG, m0=const.M0
+):
     """Lowest Factor of Safety in the window around a date, for a given calibration.
 
     This is the shared physics pipeline used by every temporal-validation script.
@@ -104,6 +89,8 @@ def min_fos_for_params(x, y, date, drainage, et, beta_deg=const.BETA_DEG, m0=con
             s_pp_onset=const.S_PP_ONSET_DEFAULT,
             drainage_rate=drainage,
             et_rate=et,
+            et_amplitude=et_amp,
+            day_of_year=rain.index.dayofyear.to_numpy(),
         )
 
     m_pp = physics.pore_pressure_ratio(S, const.S_PP_ONSET_DEFAULT)
@@ -134,7 +121,7 @@ def min_fos_for_params(x, y, date, drainage, et, beta_deg=const.BETA_DEG, m0=con
 
 def m_pp_max_at(x, y, date, calib):
     """Max pore-pressure ratio in the +/-WINDOW around date. NaN if no data."""
-    _, drainage, et = dl.get_region_params(x, y, calib)
+    _, drainage, et, et_amp = dl.get_region_params(x, y, calib)
     start = date - pd.Timedelta(days=auct.SPINUP_DAYS)
     end = date + pd.Timedelta(days=auct.WINDOW_DAYS + 5)
     rain = dl.load_rainfall(x, y, sorted({start.year, end.year}))
@@ -152,6 +139,8 @@ def m_pp_max_at(x, y, date, calib):
             s_pp_onset=const.S_PP_ONSET_DEFAULT,
             drainage_rate=drainage,
             et_rate=et,
+            et_amplitude=et_amp,
+            day_of_year=rain.index.dayofyear.to_numpy(),
         )
     m_pp = pd.Series(
         physics.pore_pressure_ratio(S, const.S_PP_ONSET_DEFAULT), index=rain.index
@@ -220,3 +209,15 @@ def plot_fos_distribution(pos, neg, auc, filename):
     fig.tight_layout()
     fig.savefig(filename, dpi=150)
     plt.close(fig)
+
+
+def classify_slope(angle_deg):
+    """Categorize a sampled slope angle for the cohesion baseline"""
+
+    if angle_deg is None or not np.isfinite(angle_deg):
+        return "invalid"
+    if angle_deg < auct.BETA_MIN or angle_deg > auct.BETA_MAX:
+        return "invalid"
+    if angle_deg > const.PHI_DEG:
+        return "dry"
+    return "hydro"

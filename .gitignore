@@ -60,3 +60,4 @@ ai-artifacts/*
 data/
 output/
 output_old/
+damage_calculation/

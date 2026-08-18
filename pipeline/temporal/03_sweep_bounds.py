@@ -1,5 +1,5 @@
 """
-03_evaluate_bounds.py - Boundary Sensitivity & Saturation Analysis
+03_sweep_bounds.py - Boundary Sensitivity & Saturation Analysis
 
 Evaluates how changing the maximum physical limits of the drainage rate affects
 the model, while keeping ET capped at a realistic 5.0 mm/day.
@@ -20,7 +20,8 @@ from core import data_loader as dl
 from core import physics
 from core import constants as const
 from core import utils as ut
-from validation import val_utils as autils
+from core import val_metrics as vm
+from pipeline.utils import utils as autils
 
 OUTPUT_DIR = "output/temporal/03_bounds_analysis"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -117,7 +118,6 @@ def calibrate_for_bounds(max_drain, max_et, regions_to_run):
 
 
 def min_fos_dynamic(x, y, date, calib_dict):
-    x, y = ut.to_lv95(x, y)
     region_id = dl.assign_region(x, y)
 
     if region_id not in calib_dict:
@@ -125,8 +125,9 @@ def min_fos_dynamic(x, y, date, calib_dict):
 
     drainage = calib_dict[region_id]["drainage"]
     et = calib_dict[region_id]["et"]
+    et_amp = calib_dict[region_id].get("et_amp", 0.0)
 
-    return autils.min_fos_for_params(x, y, date, drainage, et)
+    return autils.min_fos_for_params(x, y, date, drainage, et, et_amp)
 
 
 def evaluate_auc_for_bounds(calib_dict):
@@ -136,11 +137,12 @@ def evaluate_auc_for_bounds(calib_dict):
 
     pos, neg = [], []
     for _, ev in inv.iterrows():
-        f = min_fos_dynamic(ev["x"], ev["y"], ev["date"], calib_dict)
+        x, y = ut.to_lv95(ev["x"], ev["y"])
+        f = min_fos_dynamic(x, y, ev["date"], calib_dict)
         if np.isfinite(f):
             pos.append(f)
-            control = list(autils.control_dates(ev["date"], 1))[0]
-            g = min_fos_dynamic(ev["x"], ev["y"], control, calib_dict)
+            control = list(vm.find_control_date(x, y, ev["date"], inv, n=1))[0]
+            g = min_fos_dynamic(x, y, control, calib_dict)
             if np.isfinite(g):
                 neg.append(g)
 

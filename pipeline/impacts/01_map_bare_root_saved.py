@@ -1,45 +1,46 @@
 """
-SwissTLM3D land cover with root cohesion approximation and a bedrock mask.
+map_bare_root_saved.py - National FoS maps: bare soil vs +roots, plus required cohesion.
+Design saturation is the worst case (m_pp=1.0, fixed).
 """
 
 import sys
 import os
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 import numpy as np
 import rasterio
 
 from core import physics
 from core import constants as const
+from core import data_loader as dl
+from pipeline.utils import constants as auct
 
-SLOPE_TIF = "data/swissalti_slope/slope_deg_25m_ch.tif"
-FOREST_TIF = "data/swissTLM3D/tlm_forest_25m_ch.tif"
 NONSOIL_TIF = "data/swissTLM3D/tlm_nonsoil_25m_ch.tif"
-OUTDIR = "output/root_cohesion"
+OUTDIR = "output/impacts/01_maps"
 os.makedirs(OUTDIR, exist_ok=True)
 
 ROOT_C = {
     12: 15.0,  # closed forest
-    14: 10.0,  # (dense small stands copse)
-    13: 8.0,  # (open forest)
-    6: 6.0,  # (bush forest)
+    14: 10.0,  # dense small stands (copse)
+    13: 8.0,  # open forest
+    6: 6.0,  # bush forest
 }
 
+# literature sensitivity envelope around ROOT_C ("mid"), roughly +-40%.
 ROOT_C_SWEEP = {
     "low": {12: 8.0, 14: 6.0, 13: 5.0, 6: 5.0},
     "mid": ROOT_C,
     "high": {12: 22.0, 14: 15.0, 13: 12.0, 6: 8.0},
 }
 
-MICP_GAIN = 15.0
 M_PP_DESIGN = 1.0  # worst case
-BETA_MIN, BETA_MAX = 15.0, 45.0
-BARE_C = 0.25
+BETA_MIN, BETA_MAX = auct.BETA_MIN, auct.BETA_MAX
+BARE_C = const.C  # calibrated in soil_cohesion.py (~0.0 kPa)
 
 
 def fos_field(beta_deg, m_pp, c_field):
-    """Compute FoS for a given slope angle, pore pressure, and root cohesion field."""
+    """FoS for a given slope angle, pore pressure, and cohesion field."""
     beta_rad = np.radians(beta_deg)
     return physics.compute_fos(
         c=c_field,
@@ -52,8 +53,25 @@ def fos_field(beta_deg, m_pp, c_field):
     )
 
 
+def required_cohesion(beta_deg, m_pp):
+    """Cohesion [kPa] needed to exactly reach FoS = 1 at this pore-pressure ratio."""
+    beta_rad = np.radians(beta_deg)
+    h_v = const.H_PERP / np.cos(beta_rad)
+    tau = const.GAMMA * h_v * np.sin(beta_rad) * np.cos(beta_rad)
+    fos0 = physics.compute_fos(
+        c=0.0,
+        gamma=const.GAMMA,
+        gamma_w=const.GAMMA_W,
+        h_v=h_v,
+        beta_rad=beta_rad,
+        phi_rad=const.phi,
+        m_array=m_pp,
+    )
+    return np.maximum((1.0 - fos0) * tau, 0.0)
+
+
 def read_aligned(path, ref_shape, name):
-    """Read a raster and check that it has the same shape as a reference shape."""
+    """Read a raster and check it matches a reference shape."""
     with rasterio.open(path) as src:
         a = src.read(1)
     if a.shape != ref_shape:
@@ -64,17 +82,17 @@ def read_aligned(path, ref_shape, name):
 
 
 def cohesion_from(forest, mapping):
-    """Create a root cohesion field from a forest classification raster and a mapping of classes to cohesion values."""
+    """Root cohesion field from a forest classification raster and a class->kPa mapping."""
     c = np.zeros_like(forest, dtype=np.float32)
     for cls, val in mapping.items():
         c[forest == cls] = val
     return c
 
 
-def write(beta, valid, profile, name, fos_field, dtype=np.float32, nodata=np.nan):
-    """Write a raster to the output directory with the given name and data type."""
+def write(beta, valid, profile, name, field, dtype=np.float32, nodata=np.nan):
+    """Write one field to OUTDIR/name.tif, filling nodata outside `valid`."""
     out = np.full(beta.shape, nodata, dtype=dtype)
-    out[valid] = fos_field
+    out[valid] = field
     p = profile.copy()
     p.update(dtype=dtype, nodata=nodata)
     with rasterio.open(f"{OUTDIR}/{name}.tif", "w", **p) as dst:
@@ -82,12 +100,14 @@ def write(beta, valid, profile, name, fos_field, dtype=np.float32, nodata=np.nan
 
 
 def main():
-    with rasterio.open(SLOPE_TIF) as src:
+    with rasterio.open(auct.SLOPE_TIF) as src:
         beta = src.read(1).astype(np.float32)
         profile = src.profile
         slope_nd = src.nodata
 
-    forest = read_aligned(FOREST_TIF, beta.shape, "forest")
+    forest, _, _ = dl.load_forest_raster()
+    if forest.shape != beta.shape:
+        raise ValueError(f"forest shape {forest.shape} != slope shape {beta.shape}")
     nonsoil = read_aligned(NONSOIL_TIF, beta.shape, "non-soil")
 
     valid = np.isfinite(beta)
@@ -101,7 +121,7 @@ def main():
     print(f"pixels in {BETA_MIN:.0f}-{BETA_MAX:.0f} deg: {n_slope:,}")
     print(
         f"  removed as rock/glacier/water/snow: {n_slope - n_final:,} "
-        f"({1 - n_final / max(n_slope,1):.1%})"
+        f"({1 - n_final / max(n_slope, 1):.1%})"
     )
     print(f"  soil-mantled pixels used: {n_final:,}")
 
@@ -111,48 +131,32 @@ def main():
     c_root = cohesion_from(f, ROOT_C)
     fos_bare = fos_field(b, M_PP_DESIGN, BARE_C)
     fos_root = fos_field(b, M_PP_DESIGN, BARE_C + c_root)
-    fos_micp = fos_field(b, M_PP_DESIGN, BARE_C + c_root + MICP_GAIN)
-    rescued = ((fos_root < 1.0) & (fos_micp >= 1.0)).astype("uint8")
+    c_req = required_cohesion(b, M_PP_DESIGN)
+    r_req_root = np.maximum(c_req - c_root, 0.0)
 
     write(beta, valid, profile, "fos_bare", fos_bare)
     write(beta, valid, profile, "fos_root", fos_root)
-    write(beta, valid, profile, "fos_root_micp", fos_micp)
-    write(
-        beta,
-        valid,
-        profile,
-        "fos_rescued_by_micp",
-        rescued,
-        dtype="uint8",
-        nodata=0,
-    )
+    write(beta, valid, profile, "required_cohesion", c_req)
+    write(beta, valid, profile, "required_cohesion_above_roots", r_req_root)
 
     print(f"\nforested share of soil pixels: {(c_root > 0).mean():.1%}")
-    print(f"unstable (FoS<1) at m_pp={M_PP_DESIGN}:")
-    print(f"  bare soil (c={BARE_C})   : {(fos_bare < 1).mean():.1%}")
-    print(f"  + roots                : {(fos_root < 1).mean():.1%}   <- present day")
-    print(f"  + roots + MICP         : {(fos_micp < 1).mean():.1%}")
+    print(f"unstable (FoS<1) at m_pp={M_PP_DESIGN}, c_bare={BARE_C:.2f} kPa:")
+    print(f"  bare soil               : {(fos_bare < 1).mean():.1%}")
+    print(f"  + roots                 : {(fos_root < 1).mean():.1%}   <- present day")
     print(
-        f"\nrescued by MICP vs present day: {rescued.sum():,} px "
-        f"({rescued.mean():.1%} of soil pixels, "
-        f"{rescued.sum() / max(int((fos_root < 1).sum()), 1):.1%} of currently unstable)"
+        f"required cohesion (all soil pixels): "
+        f"median={np.median(c_req):.2f}  p90={np.percentile(c_req, 90):.2f}  "
+        f"max={c_req.max():.2f} kPa"
     )
 
     print("\nsensitivity to the root-cohesion assumption:")
-    print(f"{'variant':>8} {'unstable_now':>13} {'rescued_by_MICP':>16}")
-
+    print(f"{'variant':>8} {'unstable_now':>13}")
     for name, mapping in ROOT_C_SWEEP.items():
         cr = cohesion_from(f, mapping)
         fos_r = fos_field(b, M_PP_DESIGN, BARE_C + cr)
-        fos_m = fos_field(b, M_PP_DESIGN, BARE_C + cr + MICP_GAIN)
-        print(
-            f"{name:>8} {(fos_r < 1).mean():12.1%} {((fos_r < 1) & (fos_m >= 1)).mean():16.1%}"
-        )
+        print(f"{name:>8} {(fos_r < 1).mean():12.1%}")
 
-    print(
-        f"\n-> {OUTDIR}/fos_bare.tif | fos_root.tif | fos_root_micp.tif | "
-        f"fos_rescued_by_micp.tif"
-    )
+    print(f"\n-> {OUTDIR}/fos_bare.tif | fos_root.tif | required_cohesion.tif")
 
 
 if __name__ == "__main__":

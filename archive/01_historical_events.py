@@ -21,10 +21,10 @@ from core import data_loader as dl
 from core import physics
 from core import constants as const
 from core import utils as ut
-from validation import val_constants as auct
-from validation import val_visuals as vis
+from pipeline.utils import constants as auct
+from pipeline.utils import val_visuals as vis
 
-PLOT_DIR = "output/hist_plots"
+PLOT_DIR = "output/event_plotting"
 RESULTS_CSV = "output/validation_results.csv"
 FOS_THRESHOLD = 1.0
 
@@ -34,7 +34,7 @@ os.makedirs(PLOT_DIR, exist_ok=True)
 def simulate_event(x, y, date):
     """Runs the physics model for a specific coordinate and time window."""
     x, y = ut.to_lv95(x, y)
-    region_id, d_rate, et_rate = dl.get_region_params(x, y, auct.CALIB)
+    region_id, d_rate, et_rate, et_amp = dl.get_region_params(x, y, auct.CALIB)
 
     start = date - pd.Timedelta(days=auct.SPINUP_DAYS)
     end = date + pd.Timedelta(days=auct.WINDOW_DAYS + 5)
@@ -62,6 +62,8 @@ def simulate_event(x, y, date):
         s_pp_onset=const.S_PP_ONSET_DEFAULT,
         drainage_rate=d_rate,
         et_rate=et_rate,  # or per-region from calibration
+        et_amplitude=et_amp,
+        day_of_year=rain.index.dayofyear.to_numpy(),
     )
 
     S_series = pd.Series(S, index=rain.index)
@@ -169,25 +171,26 @@ def main():
 
     stats_file = f"{PLOT_DIR}/historical_stats.txt"
     with open(stats_file, "w", encoding="utf-8") as txt_stats:
-        txt_stats("--- Historical Event Validation Summary ---")
-        txt_stats(f"Total scored events: {n}")
-        txt_stats(
+        txt_stats.write("--- Historical Event Validation Summary ---")
+        txt_stats.write(f"Total scored events: {n}")
+        txt_stats.write(
             f"Overall Detection Rate: {detected}/{n} ({detected/n:.1%}) of events had FoS <= 1 within ±{auct.WINDOW_DAYS} days.\n"
         )
 
-        txt_stats(
-            "Stable events with <5mm rain in window:",
-            (scored[scored.label == "stable"]["rain_max_window"] < 5).sum(),
+        txt_stats.write(
+            f"Stable events with <5mm rain in window: {(scored[scored.label == 'stable']['rain_max_window'] < 5).sum()}"
         )
 
-        txt_stats("\n--- Detection Rates by Rainfall Intensity Band ---")
+        txt_stats.write("\n--- Detection Rates by Rainfall Intensity Band ---")
         for lo, hi in [(0, 20), (20, 40), (40, 80), (80, 999)]:
             band = scored[
                 (scored.rain_max_window >= lo) & (scored.rain_max_window < hi)
             ]
             if len(band) > 0:
                 det = (band.label == "unstable").mean()
-                txt_stats(f"{lo:3d}-{hi:3d} mm: {det:4.0%} detected  (n={len(band)})")
+                txt_stats.write(
+                    f"{lo:3d}-{hi:3d} mm: {det:4.0%} detected  (n={len(band)})"
+                )
 
     # Print confirmation to console
     print(f"\nModel Detection Rate: {detected}/{n} ({detected/n:.1%})")

@@ -1,40 +1,20 @@
 """
-sensitivity_tornado.py - which parameter really drives the spatial map?
-
-For every parameter that goes into compute_fos, sweep it over its literature-
-plausible range and measure two metrics on the whole raster:
-
-    baseline_unstable = share of pixels with FoS < 1 at (present-day roots)
-    micp_rescue_5kPa  = share of currently unstable pixels that a +5 kPa
-                         cohesion gain would stabilise
-
-Both metrics come from the same c_req = D - A shortcut used in cohesion_sweep.py:
-the FoS is linear in c, so re-running the map for a new (H, phi, gamma, m_pp)
-means recomputing D and A once, not simulating a fresh raster.
-
-Two views of the result:
-
-    tornado plot          -> which parameter shifts each metric the most
-    OAT line plots        -> the shape of the response (is it linear? does it
-                             saturate? does root-C run into the H_PERP ceiling?)
-
-Baseline is the present-day scenario used everywhere else:
-    H_PERP = 0.6 m, phi = 33 deg, gamma = 20 kN/m^3,
-    m_pp   = 1.0 (worst case), bare c = 0.25 kPa, roots = mid mapping.
+sensitivity_analysis.py - which parameter really drives the spatial map?
 
 Ranges are literature/field values, not made up:
     H_PERP     0.3 - 1.1 m       (StorMe measures 0.7-1.1 at real scars)
     phi        28 - 38 deg       (soil infinite-slope literature)
     gamma      17 - 22 kN/m^3    (typical soil bulk unit weight)
-    c_bare     0.0 - 2.0 kPa     (Youden J confidence band around 0.25)
+    c_bare     0.0 - 2.0 kPa     (calibrated value is 0.0; upper end tests
+                                  "what if the calibration is wrong")
     m_pp       0.4 - 1.0         (0.4 ~ annual mean sat; 1.0 = current worst)
-    root_scale 0.0 - 1.5         (roots off ... "high" ROOT_C variant)
+    root_scale 0.0 - 1.5         (roots off ... ~high ROOT_C variant)
 """
 
 import os
 import sys
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 import numpy as np
 import rasterio
@@ -45,24 +25,23 @@ import matplotlib.pyplot as plt
 
 from core import physics
 from core import constants as const
+from core import data_loader as dl
+from pipeline.utils import constants as auct
 
 # --------------------------------------------------------------------------- config
 
-SLOPE_TIF = "data/swissalti_slope/slope_deg_25m_ch.tif"
-FOREST_TIF = "data/swissTLM3D/tlm_forest_25m_ch.tif"
 NONSOIL_TIF = "data/swissTLM3D/tlm_nonsoil_25m_ch.tif"
-OUTDIR = "output/sensitivity"
+OUTDIR = "output/spatial/07_sensitivity_analysis"
 
-BETA_MIN, BETA_MAX = 15.0, 45.0
+BETA_MIN, BETA_MAX = auct.BETA_MIN, auct.BETA_MAX
 MICP_TEST_GAIN = 2.0  # kPa - the gain used for the "MICP effect" metric
 
-# baseline scenario - identical to root_cohesion.py so numbers stack
 BASELINE = dict(
     H=float(const.H_PERP),  # 0.6 m
-    phi_deg=float(np.degrees(const.phi)),  # 33 deg
-    gamma=float(const.GAMMA),  # ~20 kN/m^3
+    phi_deg=float(np.degrees(const.phi)),  # 35 deg (constants.py PHI_DEG)
+    gamma=float(const.GAMMA),  # ~19.5 kN/m^3
     gamma_w=float(const.GAMMA_W),  # 9.81 kN/m^3 (fixed physical constant)
-    c_bare=0.25,  # kPa, calibrated
+    c_bare=float(const.C),  # calibrated in soil_cohesion.py (~0.0 kPa)
     m_pp=1.0,  # worst case
     root_scale=1.0,  # ROOT_C mid mapping, unscaled
 )
@@ -78,7 +57,9 @@ SWEEPS = {
 }
 
 # low / high tornado endpoints - first and last of each sweep, kept explicit so
-# the plot legend prints exactly what varied.
+# the plot legend prints exactly what varied. c_bare's low end (0.0) now
+# equals the calibrated baseline itself -- that bar shows the effect of going
+# UP from today's calibration, not a swing around some other centre.
 TORNADO = {
     "H_PERP [m]": ("H", 0.3, 1.1),
     "phi [deg]": ("phi_deg", 28.0, 38.0),
@@ -88,7 +69,7 @@ TORNADO = {
     "root C scale [-]": ("root_scale", 0.0, 1.5),
 }
 
-ROOT_C = {  # same mapping as pipeline/root_cohesion.py
+ROOT_C = {  # matches root_cohesion.py's "mid (6-15 kPa)" tier exactly
     12: 15.0,
     14: 10.0,
     13: 8.0,
@@ -122,7 +103,8 @@ def linear_terms(beta_deg, params):
         FoS(0) = A/D
         FoS(1) = (1+A)/D    ->   D = 1/(FoS(1)-FoS(0)),  A = FoS(0)*D
     This is exact if compute_fos is linear in c, which the infinite-slope
-    formula is. cohesion_sweep.py already asserts that; we trust it here.
+    formula is (c only ever enters compute_fos additively -- see
+    soil_cohesion.py's docstring for the same fact used directly there).
     """
     phi_rad = np.radians(params["phi_deg"])
     f0 = fos_at(
@@ -188,11 +170,11 @@ def read_aligned(path, ref_shape, name):
 
 def main():
     # ---- load rasters and validity mask (identical to root_cohesion.py)
-    with rasterio.open(SLOPE_TIF) as src:
+    with rasterio.open(auct.SLOPE_TIF) as src:
         beta_full = src.read(1).astype(np.float32)
         slope_nd = src.nodata
 
-    forest_full = read_aligned(FOREST_TIF, beta_full.shape, "forest")
+    forest_full, _, _ = dl.load_forest_raster()
     nonsoil_full = read_aligned(NONSOIL_TIF, beta_full.shape, "non-soil")
 
     valid = np.isfinite(beta_full)
@@ -216,7 +198,7 @@ def main():
     )
     print(
         f"  unstable share            : {b_share:6.1%}\n"
-        f"  MICP rescue at +{MICP_TEST_GAIN:.0f} kPa : {b_rescue:6.1%}"
+        f"  cohesion gain rescue at +{MICP_TEST_GAIN:.0f} kPa : {b_rescue:6.1%}"
     )
 
     # ---- OAT sweeps -> csv + line plots
@@ -229,7 +211,9 @@ def main():
             rows.append((v, s, r))
         sweep_results[name] = np.array(rows)
         with open(f"{OUTDIR}/oat_{name}.csv", "w") as fh:
-            fh.write(f"{name},unstable_share,micp_rescue_{int(MICP_TEST_GAIN)}kPa\n")
+            fh.write(
+                f"{name},unstable_share,cohesion_gain_rescue_{int(MICP_TEST_GAIN)}kPa\n"
+            )
             for v, s, r in rows:
                 fh.write(f"{v},{s:.6f},{'' if np.isnan(r) else f'{r:.6f}'}\n")
 
@@ -244,7 +228,7 @@ def main():
             color="steelblue",
             lw=2,
             ls="--",
-            label=f"MICP rescue @ +{int(MICP_TEST_GAIN)} kPa %",
+            label=f"cohesion gain rescue @ +{int(MICP_TEST_GAIN)} kPa %",
         )
         ax.axvline(BASELINE[name], color="k", ls=":", lw=1)
         ax.set_xlabel(name)
@@ -317,8 +301,10 @@ def main():
 
     ax2.barh(y, d_resc, color="steelblue", alpha=0.8)
     ax2.axvline(0, color="k", lw=0.8)
-    ax2.set_xlabel(f"delta MICP rescue [pp] at +{int(MICP_TEST_GAIN)} kPa")
-    ax2.set_title(f"Effect on MICP wirkung\n(baseline = {b_rescue:.1%} rescued)")
+    ax2.set_xlabel(f"delta cohesion gain rescue [pp] at +{int(MICP_TEST_GAIN)} kPa")
+    ax2.set_title(
+        f"Effect on cohesion gain rescue\n(baseline = {b_rescue:.1%} rescued)"
+    )
     ax2.grid(axis="x", alpha=0.3)
 
     fig.suptitle("Tornado - which parameter dominates each metric?", y=1.02)

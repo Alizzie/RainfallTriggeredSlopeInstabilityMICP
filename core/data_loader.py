@@ -42,6 +42,9 @@ STORME_PATH = "data/wsl_inventory/hangmuren_storme.csv"
 
 FOREST_TIF = "data/swissTLM3D/tlm_forest_25m_ch.tif"
 
+CANTON_NAMES_CSV = "data/swissboundaries/canton_names.csv"
+CANTON_ID_TIF = "data/swissboundaries/canton_id_25m.tif"
+
 
 # =====================================================================
 # Region geometry (GeoJSON) — single source of truth for drought regions
@@ -540,3 +543,25 @@ def load_forest_raster():
         transform = src.transform
         nodata = src.nodata
     return class_array, transform, nodata
+
+
+# ---- Cantons
+def load_canton_names():
+    if os.path.exists(CANTON_NAMES_CSV):
+        names_df = pd.read_csv(CANTON_NAMES_CSV)
+        return dict(zip(names_df["KANTONSNUM"], names_df["NAME"]))
+    return {}
+
+
+def load_canton_raster():
+    if not os.path.exists(CANTON_ID_TIF):
+        raise FileNotFoundError(
+            f"{CANTON_ID_TIF} not found - build it first (see QGIS_prep_guide.md, section 4)."
+        )
+
+    with rasterio.open(CANTON_ID_TIF) as src:
+        canton_id = src.read(1).astype(np.int16)
+        transform = src.transform
+        bounds = src.bounds
+
+    return canton_id, transform, bounds

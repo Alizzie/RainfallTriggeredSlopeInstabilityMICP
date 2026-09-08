@@ -1,5 +1,5 @@
 """
-map_bare_root_saved.py - National FoS maps: bare soil vs +roots, plus required cohesion.
+01_fos_maps.py - National FoS maps: bare soil, roots, MICP, and roots + MICP.
 Design saturation is the worst case (m_pp=1.0, fixed).
 """
 
@@ -17,8 +17,6 @@ from core import data_loader as dl
 from pipeline.utils import constants as auct
 
 NONSOIL_TIF = "data/swissTLM3D/tlm_nonsoil_25m_ch.tif"
-OUTDIR = "output/impacts/01_maps"
-os.makedirs(OUTDIR, exist_ok=True)
 
 ROOT_C = {
     12: 15.0,  # closed forest
@@ -34,9 +32,14 @@ ROOT_C_SWEEP = {
     "high": {12: 22.0, 14: 15.0, 13: 12.0, 6: 8.0},
 }
 
-M_PP_DESIGN = 1.0  # worst case
+MICP_C = 2.0
+
+M_PP_DESIGN = 0.12  # worst case
 BETA_MIN, BETA_MAX = auct.BETA_MIN, auct.BETA_MAX
 BARE_C = const.C  # calibrated in soil_cohesion.py (~0.0 kPa)
+
+OUTDIR = f"output/impacts/01_maps/m_pp_{M_PP_DESIGN}"
+os.makedirs(OUTDIR, exist_ok=True)
 
 
 def fos_field(beta_deg, m_pp, c_field):
@@ -95,7 +98,7 @@ def write(beta, valid, profile, name, field, dtype=np.float32, nodata=np.nan):
     out[valid] = field
     p = profile.copy()
     p.update(dtype=dtype, nodata=nodata)
-    with rasterio.open(f"{OUTDIR}/{name}.tif", "w", **p) as dst:
+    with rasterio.open(f"{OUTDIR}/{name}_{M_PP_DESIGN}.tif", "w", **p) as dst:
         dst.write(out, 1)
 
 
@@ -129,34 +132,73 @@ def main():
     f = forest[valid]
 
     c_root = cohesion_from(f, ROOT_C)
+    c_micp = np.full(b.shape, MICP_C, dtype=np.float32)
+
     fos_bare = fos_field(b, M_PP_DESIGN, BARE_C)
     fos_root = fos_field(b, M_PP_DESIGN, BARE_C + c_root)
+    fos_micp = fos_field(b, M_PP_DESIGN, BARE_C + c_micp)
+    fos_root_micp = fos_field(b, M_PP_DESIGN, BARE_C + c_root + c_micp)
+
     c_req = required_cohesion(b, M_PP_DESIGN)
     r_req_root = np.maximum(c_req - c_root, 0.0)
+    c_req_micp = np.maximum(c_req - c_micp, 0.0)
+    c_req_root_micp = np.maximum(c_req - c_root - c_micp, 0.0)
 
     write(beta, valid, profile, "fos_bare", fos_bare)
     write(beta, valid, profile, "fos_root", fos_root)
+    write(beta, valid, profile, "fos_micp", fos_micp)
+    write(beta, valid, profile, "fos_root_micp", fos_root_micp)
+
     write(beta, valid, profile, "required_cohesion", c_req)
     write(beta, valid, profile, "required_cohesion_above_roots", r_req_root)
-
-    print(f"\nforested share of soil pixels: {(c_root > 0).mean():.1%}")
-    print(f"unstable (FoS<1) at m_pp={M_PP_DESIGN}, c_bare={BARE_C:.2f} kPa:")
-    print(f"  bare soil               : {(fos_bare < 1).mean():.1%}")
-    print(f"  + roots                 : {(fos_root < 1).mean():.1%}   <- present day")
-    print(
-        f"required cohesion (all soil pixels): "
-        f"median={np.median(c_req):.2f}  p90={np.percentile(c_req, 90):.2f}  "
-        f"max={c_req.max():.2f} kPa"
+    write(beta, valid, profile, "required_cohesion_above_micp", c_req_micp)
+    write(
+        beta, valid, profile, "required_cohesion_above_roots_and_micp", c_req_root_micp
     )
 
-    print("\nsensitivity to the root-cohesion assumption:")
-    print(f"{'variant':>8} {'unstable_now':>13}")
+    unstable_bare = fos_bare < 1
+    unstable_root = fos_root < 1
+    unstable_micp = fos_micp < 1
+    unstable_root_micp = fos_root_micp < 1
+
+    print(f"forested share of soil pixels: {(c_root > 0).mean():.1%}")
+    print(f"MICP additional cohesion: {MICP_C:.2f} kPa")
+
+    print(f"unstable (FoS < 1) at m_pp={M_PP_DESIGN:g}, c_bare={BARE_C:.2f} kPa:")
+    print(f"bare soil               : {unstable_bare.mean():.1%}")
+    print(f"+ roots                 : {unstable_root.mean():.1%}")
+    print(f"+ MICP ({MICP_C:g} kPa)       : {unstable_micp.mean():.1%}")
+    print(f"+ roots + MICP          : {unstable_root_micp.mean():.1%}")
+
+    print("")
+    print("share of bare-unstable pixels stabilized:")
+    print(
+        f"roots        : {(unstable_bare & ~unstable_root).sum() / max(unstable_bare.sum(), 1):.1%}"
+    )
+    print(
+        f"MICP         : {(unstable_bare & ~unstable_micp).sum() / max(unstable_bare.sum(), 1):.1%}"
+    )
+    print(
+        f"roots + MICP : {(unstable_bare & ~unstable_root_micp).sum() / max(unstable_bare.sum(), 1):.1%}"
+    )
+
+    print("")
+    print(
+        f"required cohesion: median={np.median(c_req):.2f}, p90={np.percentile(c_req, 90):.2f}, max={c_req.max():.2f} kPa"
+    )
+
+    print("")
+    print("sensitivity to the root-cohesion assumption:")
+    print(f"{'variant':>8} {'unstable_root':>15} {'unstable_root+micp':>20}")
+
     for name, mapping in ROOT_C_SWEEP.items():
         cr = cohesion_from(f, mapping)
         fos_r = fos_field(b, M_PP_DESIGN, BARE_C + cr)
-        print(f"{name:>8} {(fos_r < 1).mean():12.1%}")
+        fos_rm = fos_field(b, M_PP_DESIGN, BARE_C + cr + c_micp)
+        print(f"{name:>8} {(fos_r < 1).mean():14.1%} {(fos_rm < 1).mean():19.1%}")
 
-    print(f"\n-> {OUTDIR}/fos_bare.tif | fos_root.tif | required_cohesion.tif")
+    print("")
+    print(f"results saved to {OUTDIR}")
 
 
 if __name__ == "__main__":

@@ -22,24 +22,30 @@ import os
 import sys
 
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from core import constants as const
 from core import physics
+from pipeline.utils import constants as auct
 
 OUTPUT_DIR = "output/data_analysis/01_fos_saturation_theory"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # Observed / benchmark reference lines (from your earlier notes + Schaller inventories)
-S_BACKGROUND = 0.60  # typical dry-day saturation
-S_FAILURE_BM = 0.76  # low-rainfall triggering benchmark
+S_BACKGROUND = 0.72  # typical dry-day saturation
+S_FAILURE_BM = 0.82  # low-rainfall triggering benchmark
 ONSET = const.S_PP_ONSET_DEFAULT
 
 # Grids
 BETA_GRID = np.linspace(const.BETA_MIN, const.BETA_MAX + 10, 121)  # 15..45 deg
 C_GRID = np.arange(0.0, 12.01, 0.25)  # kPa (matches val_constants)
+
+MAX_CAPACITY_MM = (
+    const.N * const.H_PERP * 1000.0
+)  # matches physics.calculate_daily_saturation
 
 
 # ---------------------------------------------------------------------------
@@ -87,6 +93,90 @@ def c_for_saturated_stability(beta_rad, target=1.0):
     N0, tau, lever = _stresses(beta_rad)
     sigma_sat = np.maximum(N0 - lever, 0.0)
     return np.maximum(target * tau - sigma_sat * np.tan(const.phi), 0.0)
+
+
+# ---------------------------------------------------------------------------
+# NEW: regional, calibrated rainfall bridge
+# ---------------------------------------------------------------------------
+def required_steady_rainfall(
+    drainage_rate, et_rate, s_crit_value, onset=ONSET, max_capacity_mm=MAX_CAPACITY_MM
+):
+    """Steady-state daily rainfall [mm/day] that would sustain the soil at
+    s_crit_value indefinitely, given ONE region's calibrated drainage_rate
+    and et_rate. NaN if s_crit_value itself is NaN (never triggers / fails
+    dry at this beta,c - see s_crit()).
+
+    Derivation: at equilibrium, inflow = outflow in the daily water balance
+        R = et_rate + drainage_rate * excess
+        excess = max(0, moisture_mm - onset_mm) = max(0, s_crit - onset) * max_capacity_mm
+    """
+    if np.isnan(s_crit_value):
+        return np.nan
+    excess_mm = max(0.0, s_crit_value - onset) * max_capacity_mm
+    return et_rate + drainage_rate * excess_mm
+
+
+def regional_rainfall_thresholds(beta_deg=const.BETA_DEG, c=const.C):
+    """For every calibration region in auct.CALIB, compute the steady-state
+    rainfall required to sustain the model's own critical saturation at the
+    CURRENT operating point (beta_deg, c). Returns a DataFrame, one row per
+    region, sorted by required rainfall (driest-triggering region first)."""
+    b = np.radians(beta_deg)
+    s_crit_value = float(s_crit(b, c))  # same operating point for every region -
+    # geotechnical params are global by design;
+    # only drainage/et vary regionally below
+
+    calib = auct.CALIB
+    # column names must match your actual CALIB csv - adjust here if different
+    rows = []
+    for _, region in calib.iterrows():
+        region_id = region["region_id"]
+        drainage = region["drainage"]
+        et = region["et"]
+        r_required = required_steady_rainfall(drainage, et, s_crit_value)
+        rows.append(
+            {
+                "region_id": region_id,
+                "drainage_rate": drainage,
+                "et_rate": et,
+                "s_crit": s_crit_value,
+                "required_rainfall_mm_per_day": (
+                    round(r_required, 3) if np.isfinite(r_required) else np.nan
+                ),
+            }
+        )
+
+    df = pd.DataFrame(rows).sort_values("required_rainfall_mm_per_day")
+    return df
+
+
+def fig_regional_rainfall_thresholds(df):
+    """Bar chart: steady-state rainfall required per region, at the current
+    (const.BETA_DEG, const.C) operating point."""
+    fig, ax = plt.subplots(figsize=(11, 6))
+    valid = df.dropna(subset=["required_rainfall_mm_per_day"])
+    ax.bar(
+        valid["region_id"].astype(str),
+        valid["required_rainfall_mm_per_day"],
+        color="steelblue",
+        edgecolor="black",
+        linewidth=0.3,
+    )
+    ax.set_xlabel("calibration region")
+    ax.set_ylabel("required steady rainfall [mm/day]")
+    ax.set_title(
+        f"Steady-state rainfall to sustain S_crit by region\n"
+        f"(beta={const.BETA_DEG} deg, c'={const.C} kPa - mathematically derived, "
+        f"not an empirical threshold)",
+        fontsize=11,
+    )
+    ax.tick_params(axis="x", rotation=90, labelsize=7)
+    ax.grid(axis="y", alpha=0.3)
+    fig.tight_layout()
+    path = f"{OUTPUT_DIR}/fig4_regional_rainfall_thresholds.png"
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+    return path
 
 
 # ---------------------------------------------------------------------------
@@ -308,8 +398,19 @@ def main():
     p1 = fig_fos_vs_saturation()
     p2 = fig_critical_surface()
     p3 = fig_cohesion_targets()
+
+    print("\n" + "=" * 70)
+    print("REGIONAL RAINFALL THRESHOLDS (mathematically derived, steady-state)")
+    print("=" * 70)
+    rainfall_df = regional_rainfall_thresholds()
+    csv_path = f"{OUTPUT_DIR}/regional_rainfall_thresholds.csv"
+    rainfall_df.to_csv(csv_path, index=False)
+    print(rainfall_df.to_string(index=False))
+    print(f"\n-> {csv_path}")
+    p4 = fig_regional_rainfall_thresholds(rainfall_df)
+
     print("\nsaved:")
-    for p in (p1, p2, p3):
+    for p in (p1, p2, p3, p4):
         print(f"  {p}")
 
 

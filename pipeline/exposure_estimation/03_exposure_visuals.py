@@ -304,11 +304,11 @@ def plot_asset_damage(z, dem, layers, outpath, map_layers=MAP1):
     ax.set_yticks([])
 
     handles = [Patch(facecolor=AFFECTED_EMPTY_COLOR, label="affected, no asset")]
-    handles += [Patch(facecolor=COLORS[n], label=f"{n} - affected") for _, n in present]
-    handles += [
-        Patch(facecolor=COLORS_SPARED[n], alpha=UNAFFECTED_ALPHA, label=f"{n} - spared")
-        for _, n in present
-    ]
+    handles += [Patch(facecolor=COLORS[n], label=f"{n}") for _, n in present]
+    # handles += [
+    #     Patch(facecolor=COLORS_SPARED[n], alpha=UNAFFECTED_ALPHA, label=f"{n} - spared")
+    #     for _, n in present
+    # ]
     handles += [Patch(facecolor="#9e9e9e", label="not affected, no asset")]
     ax.legend(handles=handles, loc="upper right", framealpha=0.9, fontsize=8)
 

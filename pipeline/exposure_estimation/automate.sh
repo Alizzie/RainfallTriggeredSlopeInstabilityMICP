@@ -7,7 +7,7 @@ conda activate "$CONDA_ENV"
 
 PYTHON=python
 
-M_PP=0.12
+M_PP=1.0
 
 TYPES=(
     "bare"

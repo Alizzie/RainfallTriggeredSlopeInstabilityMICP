@@ -36,7 +36,7 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 # sensitivity_analysis.py already tests (StorMe field measurements cite
 # 0.7-1.1m at real scars); const.H_PERP (0.6m, the model default) is included
 # so every result here has a baseline to compare against.
-H_PERP_GRID = sorted({0.3, 0.6, const.H_PERP, 1.0, 1.1})
+H_PERP_GRID = sorted({0.3, 0.6, const.H_PERP, 1.0, 1.1, 1.5, 2})
 
 # Forest raster class -> added cohesion [kPa]. Class codes and German names
 # match SwissTLM3D; "low"/"mid"/"high" scale the same four classes to bracket

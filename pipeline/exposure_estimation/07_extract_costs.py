@@ -145,9 +145,6 @@ def main():
         print(f"    {str(canton):>22}: {n:,}")
 
     print(f"\n-> {path}")
-    print("\n  Read `money_mentions` first - it lists just the amounts. Open")
-    print("  `description` only when the context is unclear. Fill in cost_chf,")
-    print("  asset and is_whole_storm_total as you go.")
 
 
 if __name__ == "__main__":

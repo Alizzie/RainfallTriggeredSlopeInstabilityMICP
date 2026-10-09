@@ -248,6 +248,7 @@ def plot_by_asset(per_asset, outpath):
         )
 
         p25, med, p75 = s.quantile([0.25, 0.5, 0.75])
+        mean = s.mean()
         ax.plot(
             [p25, p75],
             [i, i],
@@ -258,6 +259,9 @@ def plot_by_asset(per_asset, outpath):
             zorder=2,
         )
         ax.plot([med, med], [i - 0.28, i + 0.28], color="black", lw=2.2, zorder=4)
+        ax.plot(
+            [mean, mean], [i - 0.28, i + 0.28], color="red", lw=2.2, ls="--", zorder=5
+        )
 
         # Keep the statistics in a fixed annotation column instead of placing
         # them after the largest dot.  This avoids labels jumping around or
@@ -265,7 +269,7 @@ def plot_by_asset(per_asset, outpath):
         ax.text(
             1.02,
             i,
-            f"n={len(s)}   median CHF {med:,.0f}",
+            f"n={len(s)}  mean CHF {mean:,.0f}  median CHF {med:,.0f}",
             transform=ax.get_yaxis_transform(),
             va="center",
             ha="left",
@@ -289,7 +293,7 @@ def plot_by_asset(per_asset, outpath):
         fontweight="bold",
     )
 
-    fig.tight_layout(rect=(0, 0, 0.80, 1))
+    fig.tight_layout(rect=(0, 0, 0.74, 1))
     fig.savefig(outpath, dpi=150, facecolor="white", bbox_inches="tight")
     plt.close(fig)
     print(f"-> {outpath}")
@@ -400,12 +404,9 @@ def plot_subtypes_by_asset(per_asset, outdir):
 
 
 def plot_convergence(per_asset, outpath, n_draws=200, seed=0):
-    """Is the sample big enough? Repeatedly split each asset's figures in two
-    at random and compare the medians.
-
-    A random split matters: the reviewed file is date-ordered, so splitting by
-    position compares old large events against recent itemised ones and looks
-    far worse than it is.
+    """Assess the stability of asset-specific mean costs by repeatedly
+    splitting each asset's records into two random halves and comparing
+    the means.
     """
     rng = np.random.default_rng(seed)
     rows = []
@@ -418,8 +419,9 @@ def plot_convergence(per_asset, outpath, n_draws=200, seed=0):
         for _ in range(n_draws):
             idx = rng.permutation(len(s))
             h = len(s) // 2
-            m1, m2 = np.median(s[idx[:h]]), np.median(s[idx[h:]])
-            diffs.append(abs(m1 - m2) / max(m1, m2))
+            mean1 = np.mean(s[idx[:h]])
+            mean2 = np.mean(s[idx[h:]])
+            diffs.append(abs(mean1 - mean2) / max(abs(mean1), abs(mean2)))
         rows.append({"asset": a, "n": len(s), "split_half_diff": np.median(diffs)})
 
     df = pd.DataFrame(rows).sort_values("n")
@@ -447,16 +449,16 @@ def plot_convergence(per_asset, outpath, n_draws=200, seed=0):
             fontsize=9,
         )
 
-    ax.axhline(20, color="#2e7d32", ls="--", lw=1.5, label="20% - stable enough to use")
-    ax.set_xlabel("number of reported figures")
-    ax.set_ylabel("difference between two random halves [%]")
+    ax.axhline(20, color="#2e7d32", ls="--", lw=1.5, label="20% reference threshold")
+    ax.set_xlabel("number of reported cost records")
+    ax.set_ylabel("Median difference between random-half means [%]")
     ax.set_xlim(0, df["n"].max() * 1.25)
     ax.set_ylim(0, max(80, 100 * df["split_half_diff"].max() * 1.2))
     ax.grid(alpha=0.3)
     ax.set_axisbelow(True)
     ax.legend()
     ax.set_title(
-        "Is the sample big enough?",
+        "How stable are the estimated mean costs?",
         fontsize=12,
         fontweight="bold",
     )
@@ -589,24 +591,8 @@ def main():
     # --- figures ---
     plot_by_asset(per_asset, f"{OUTDIR}/cost_by_asset.png")
     plot_subtypes_by_asset(per_asset, OUTDIR)
-    conv = plot_convergence(per_asset, f"{OUTDIR}/cost_convergence.png")
+
     plot_composition(df, f"{OUTDIR}/cost_composition.png")
-
-    # --- what to paste into the risk script ---
-    print(f"\n  For 08_risk_map.py:")
-    print("    COST_MEDIAN_CHF = {")
-    for a, r in t.iterrows():
-        key = {"road": "roads", "building": "buildings"}.get(a, a)
-        print(f"        {key!r:20s}: {int(r['median']):>9,},")
-    print("    }")
-
-    if conv is not None and not conv.empty:
-        shaky = conv[conv["split_half_diff"] > 0.20]["asset"].tolist()
-        if shaky:
-            print(f"\n  [note] {', '.join(shaky)} vary by more than 20% between")
-            print("         random halves, so those medians are indicative only.")
-            print("         Report them with the quartile range, not alone.")
-
     print(f"\n-> {OUTDIR}/cost_summary.csv")
     print(f"-> {OUTDIR}/cost_summary_by_subtype.csv")
 

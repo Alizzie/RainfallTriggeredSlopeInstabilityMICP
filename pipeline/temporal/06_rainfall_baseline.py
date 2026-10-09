@@ -1,7 +1,5 @@
 """06_rainfall_baseline.py
 
-Does the bucket model earn its place?
-
 Compares the calibrated bucket model against plain antecedent rainfall sums
 (no model, no parameters) at discriminating landslide days from matched
 control days. Uses the same train/test split, the same control-date

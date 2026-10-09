@@ -35,7 +35,7 @@ ROOT_C_SWEEP = {
 
 MICP_C = 2.0
 
-M_PP_DESIGN = float(1.0)  # worst case
+M_PP_DESIGN = float(0.79)  # worst case
 BETA_MIN, BETA_MAX = auct.BETA_MIN, auct.BETA_MAX
 BARE_C = const.C  # calibrated in soil_cohesion.py (~0.0 kPa)
 MICP_FEASIBILITY_TIF = "data/injection/binary_injection.tif"

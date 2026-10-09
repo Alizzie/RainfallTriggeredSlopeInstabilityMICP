@@ -19,7 +19,6 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")
 from core import data_loader as dl
 from core import physics
 from core import constants as const
-from core import utils as ut
 from core import val_metrics as vm
 from pipeline.utils import utils as autils
 
@@ -137,7 +136,7 @@ def evaluate_auc_for_bounds(calib_dict):
 
     pos, neg = [], []
     for _, ev in inv.iterrows():
-        x, y = ut.to_lv95(ev["x"], ev["y"])
+        x, y = dl.to_lv95(ev["x"], ev["y"])
         f = min_fos_dynamic(x, y, ev["date"], calib_dict)
         if np.isfinite(f):
             pos.append(f)

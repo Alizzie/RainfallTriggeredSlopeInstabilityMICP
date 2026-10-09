@@ -176,6 +176,9 @@ def canton_events(in_canton, transform):
         keep.append(bool(in_canton[r, c]) if (0 <= r < h and 0 <= c < w) else False)
 
     out = df.loc[keep].reset_index(drop=True)
+    # save new df
+    outpath = f"{OUTDIR}/canton_events.csv"
+    out.to_csv(outpath, index=False)
     print(f"  {len(out):,} fall inside canton {TARGET_CANTON_IDS} by coordinate")
     return out
 
@@ -208,18 +211,13 @@ def load_reviewed_costs(path=COST_SUMMARY):
 
 
 def load_raw_reviewed_costs(path=COSTS_RAW):
-    """Return one reviewed CHF observation per row for true boxplots.
-
-    The cleaning deliberately mirrors 12_plot_costs.py: only single-asset
-    categories are retained and figures above CHF 5M are omitted.
-    """
+    """Return one reviewed CHF observation per row for true boxplots."""
     if not path or not os.path.exists(path):
         return None
 
     df = pd.read_csv(path, encoding="latin-1")
     df.columns = [str(c).strip() for c in df.columns]
 
-    # Accept the reviewed-file headers used by 12_plot_costs.py.
     ren = {}
     for c in df.columns:
         lc = c.strip().lower()

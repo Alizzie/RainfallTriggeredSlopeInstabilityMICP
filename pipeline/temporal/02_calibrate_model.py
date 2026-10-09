@@ -116,7 +116,9 @@ def main():
                 ),
                 bounds=[(0.01, 0.5), (0.0, 5.0), (0.0, 0.9)],
             )
-            fits.append(np.append(res.x, res.fun))
+
+            obs_var = float(np.nanvar(nfk_common))
+            fits.append(np.append(res.x, [res.fun, obs_var]))
 
         if fits:
             # Average the optimized rates across all valid years for the region
@@ -130,15 +132,16 @@ def main():
                     "et": avg[1],
                     "et_amplitude": avg[2],
                     "nfk_rmse": float(np.sqrt(avg[3])),
+                    "nfk_sd": float(np.sqrt(avg[4])),
+                    "nse": float(1 - avg[3] / avg[4]) if avg[4] > 0 else np.nan,
                 }
             )
 
-    os.makedirs("output", exist_ok=True)
     results_df = pd.DataFrame(results)
     results_df.to_csv(dl.PATH_CALIB, index=False)
     print(f"Calibration complete -> {dl.PATH_CALIB}.")
 
-    with open("output/temporal/02_calibration/summary.txt", "w") as f:
+    with open(f"{OUTPUT_DIR}/summary.txt", "w") as f:
         f.write("Decision-rule inputs (compare against the constant-ET run):\n")
         f.write(f"  mean nFK RMSE     : {results_df['nfk_rmse'].mean():.4f}\n")
         f.write(f"  mean ET           : {results_df['et'].mean():.3f} mm/day\n")
@@ -147,6 +150,8 @@ def main():
             f"  regions at a=0.9 bound: {(results_df['et_amplitude'] > 0.89).sum()}"
             f"/{len(results_df)}\n"
         )
+        f.write(f"  mean nFK SD       : {results_df['nfk_sd'].mean():.4f}\n")
+        f.write(f"  mean NSE          : {results_df['nse'].mean():.4f}\n")
 
 
 if __name__ == "__main__":

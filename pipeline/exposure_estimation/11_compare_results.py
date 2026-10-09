@@ -114,10 +114,10 @@ CELL_AREA_M2 = CELL_SIZE_M**2
 # Column in ead_by_asset.csv holding each treatment's EAD.
 # NOTE the longest-prefix match: "root_micp" must not resolve to "root".
 EAD_COL = {
-    "bare": "ead_median",
-    "root": "root_ead_median",
-    "micp": "micp_ead_median",
-    "root_micp": "root_micp_ead_median",
+    "bare": "ead_mean",
+    "root": "root_ead_mean",
+    "micp": "micp_ead_mean",
+    "root_micp": "root_micp_ead_mean",
 }
 
 # Exposure layers to carry into the comparison, in reporting order.
@@ -161,6 +161,10 @@ FIGURES = [
     "curve_ead",
     "heatmap_reduction",
     "ranking_shift",
+    "fos_treatment_grid",
+    "risk_treatment_grid",
+    "footprint_treatment_grid",
+    "exposure_bars_treatment_grid",
 ]
 WANTED = [s.strip() for s in args.only.split(",")] if args.only else list(FIGURES)
 
@@ -353,7 +357,7 @@ def footprint_stats(scen, in_canton):
 
 
 def ead_total(scen):
-    """Total median-cost EAD for this treatment, from the shared EAD table."""
+    """Total mean-cost EAD for this treatment, from the shared EAD table."""
     df = read_csv_safe(scen.ead_csv)
     if df is None:
         return {}
@@ -717,6 +721,178 @@ def grid_exposure_bars_figure(outpath):
     )
     fig.tight_layout(rect=(0.02, 0.02, 1, 0.96))
     fig.savefig(outpath, dpi=150, facecolor="white", bbox_inches="tight")
+    plt.close(fig)
+    print(f"-> {outpath}")
+
+
+def footprint_legend(fig, axes):
+    handles = [
+        Patch(facecolor="#ff6d00", alpha=0.7, label="Reachable runout"),
+        Patch(facecolor="#1a237e", alpha=0.8, label="Release cells"),
+    ]
+
+    fig.legend(
+        handles=handles,
+        loc="lower center",
+        ncol=2,
+        frameon=False,
+        bbox_to_anchor=(0.5, 0.005),
+    )
+
+
+def shared_horizontal_colorbar(fig, handle, label, ticks=None):
+    # Dedicated colour-bar axis below the map panels
+    cax = fig.add_axes([0.20, 0.055, 0.60, 0.025])
+
+    cbar = fig.colorbar(
+        handle,
+        cax=cax,
+        orientation="horizontal",
+        ticks=ticks,
+    )
+    cbar.set_label(label, fontsize=9, labelpad=4)
+    cbar.ax.tick_params(labelsize=8)
+    return cbar
+
+
+def fos_colorbar(fig, handle, axes):
+    shared_horizontal_colorbar(
+        fig,
+        handle,
+        "Factor of safety (FoS)",
+        ticks=np.arange(0, 2.01, 0.25),
+    )
+
+
+def risk_colorbar(fig, handle, axes):
+    shared_horizontal_colorbar(
+        fig,
+        handle,
+        "Allocated expected annual damage [CHF/year per 25 m cell, log scale]",
+    )
+
+
+def treatment_grid_single_mpp(
+    panel_fn,
+    m_pp,
+    title,
+    outpath,
+    cbar_fn=None,
+    legend_fn=None,
+    figsize=(8.5, 9.5),
+):
+    """Create a compact 2x2 treatment comparison for one m_pp."""
+
+    if m_pp not in M_PPS:
+        raise ValueError(f"m_pp={m_pp} is not in {M_PPS}")
+
+    if len(TREATMENTS) != 4:
+        raise ValueError("The 2x2 grid requires exactly four treatments.")
+
+    fig, axes = plt.subplots(
+        2,
+        2,
+        figsize=figsize,
+        squeeze=False,
+        gridspec_kw={"wspace": 0.01, "hspace": 0.08},
+    )
+
+    handle = None
+
+    for i, treatment in enumerate(TREATMENTS):
+        ax = axes[i // 2, i % 2]
+        scenario = SCENARIOS[(treatment, m_pp)]
+
+        result = panel_fn(ax, scenario)
+        if result is not None:
+            handle = result
+
+        ax.set_title(
+            label_treatment(treatment),
+            fontsize=11,
+            fontweight="bold",
+            pad=3,
+        )
+        ax.set_xticks([])
+        ax.set_yticks([])
+
+    fig.suptitle(
+        f"{title}\n{CANTON_LABEL} | $m_{{pp}}={m_pp}$",
+        fontsize=13,
+        fontweight="bold",
+        y=0.98,
+    )
+
+    if cbar_fn is not None and handle is not None:
+        cbar_fn(fig, handle, axes)
+
+    if legend_fn is not None:
+        legend_fn(fig, axes)
+
+    fig.subplots_adjust(
+        left=0.01,
+        right=0.99,
+        bottom=0.13,
+        top=0.91,
+        wspace=0.01,
+        hspace=0.08,
+    )
+
+    fig.savefig(
+        outpath,
+        dpi=200,
+        facecolor="white",
+        bbox_inches="tight",
+        pad_inches=0.03,
+    )
+    plt.close(fig)
+    print(f"-> {outpath}")
+
+
+def exposure_bars_treatment_grid(m_pp, outpath):
+    fig, axes = plt.subplots(
+        2,
+        2,
+        figsize=(10, 7.5),
+        squeeze=False,
+        gridspec_kw={"wspace": 0.12, "hspace": 0.22},
+    )
+
+    for i, treatment in enumerate(TREATMENTS):
+        ax = axes[i // 2, i % 2]
+        panel_exposure_bars(ax, SCENARIOS[(treatment, m_pp)])
+
+        ax.set_title(
+            label_treatment(treatment),
+            fontsize=11,
+            fontweight="bold",
+        )
+        ax.set_xlim(0, EXPOSURE_XMAX)
+        ax.set_xlabel("Asset exposed to runout (%)", fontsize=9)
+        ax.tick_params(axis="both", labelsize=8)
+
+    fig.suptitle(
+        f"Exposure to modelled runout | {CANTON_LABEL} | " f"$m_{{pp}}={m_pp}$",
+        fontsize=13,
+        fontweight="bold",
+    )
+
+    fig.subplots_adjust(
+        left=0.20,
+        right=0.98,
+        bottom=0.07,
+        top=0.91,
+        wspace=0.12,
+        hspace=0.22,
+    )
+
+    fig.savefig(
+        outpath,
+        dpi=200,
+        facecolor="white",
+        bbox_inches="tight",
+        pad_inches=0.03,
+    )
     plt.close(fig)
     print(f"-> {outpath}")
 
@@ -1119,6 +1295,43 @@ def main():
 
     # ---- figures ----
     print("")
+    if "footprint_treatment_grid" in WANTED:
+        for m_pp in M_PPS:
+            treatment_grid_single_mpp(
+                panel_footprint,
+                m_pp,
+                "Modelled runout corridors by treatment",
+                f"{OUTDIR}/footprint_treatments_mpp_{m_pp}.png",
+                legend_fn=footprint_legend,
+            )
+
+    if "fos_treatment_grid" in WANTED:
+        for m_pp in M_PPS:
+            treatment_grid_single_mpp(
+                panel_fos,
+                m_pp,
+                "Factor of safety by treatment",
+                f"{OUTDIR}/fos_treatments_mpp_{m_pp}.png",
+                cbar_fn=fos_colorbar,
+            )
+
+    if "risk_treatment_grid" in WANTED:
+        for m_pp in M_PPS:
+            treatment_grid_single_mpp(
+                panel_risk,
+                m_pp,
+                "Allocated expected annual damage by treatment",
+                f"{OUTDIR}/risk_treatments_mpp_{m_pp}.png",
+                cbar_fn=risk_colorbar,
+            )
+
+    if "exposure_bars_treatment_grid" in WANTED:
+        for m_pp in M_PPS:
+            exposure_bars_treatment_grid(
+                m_pp,
+                f"{OUTDIR}/exposure_bars_mpp_{m_pp}.png",
+            )
+
     if "grid_fos" in WANTED:
         grid_figure(
             panel_fos,

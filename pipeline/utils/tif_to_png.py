@@ -25,8 +25,7 @@ except ImportError:
     print("[info] geopandas not available; maps will plot without border overlay")
 
 
-M_PP = 0.12
-
+M_PP = 1.0
 PARENT_DIR = f"output/impacts/01_maps/m_pp_{M_PP}"
 OUTDIR = f"{PARENT_DIR}/png_export"
 
